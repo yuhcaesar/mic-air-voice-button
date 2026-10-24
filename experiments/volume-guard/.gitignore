@@ -1,0 +1,6 @@
+/dist/
+*.dll
+*.exe
+*.stdout.txt
+*.stderr.txt
+/tests/report.txt

@@ -1,0 +1,5 @@
+LIBRARY volume-guard.dll
+
+EXPORTS
+AirKeyGuardStart
+AirKeyGuardStop
