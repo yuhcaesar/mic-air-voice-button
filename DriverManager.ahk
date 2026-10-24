@@ -1,6 +1,6 @@
 ; DriverManager.ahk — AHK v2 x64. No action is performed merely by including this file.
 ; GetDriverStatus() returns {installed, running, pending, description, bootId,
-;   partial, known, needsAttention, hasComponents, serviceConflict,
+;   partial, known, hasComponents, serviceConflict,
 ;   keyboardRunning, mouseRunning, keyboardFilters, mouseFilters, detail}.
 ; installed means both expected services and both Class UpperFilters are configured.
 ; running means WMI positively reports BOTH kernel drivers Running + Started.
@@ -8,14 +8,14 @@
 ; Installed-but-not-running is ambiguous (new install OR failed load), so pending=false.
 ; The UI should persist a successful operation and bootId to require its next reboot.
 ; RunDriverOperation("install"|"uninstall", absoluteInstallerPath) returns
-;   {ok, cancelled, exitCode, message, needsReboot, status}. exitCode=-1 means not run.
+;   {ok, cancelled, exitCode, message, needsReboot}. exitCode=-1 means not run.
 ; Only the pinned official installer is elevated; no registry writes, file deletions,
 ; input filters, key sends, automatic restart, or autostart are performed here.
 ; SHA256File(path) returns uppercase SHA-256, or throws on failure.
 
 GetDriverStatus() {
     result := {installed: false, running: false, pending: false, description: "",
-        bootId: "", partial: false, known: false, needsAttention: false,
+        bootId: "", partial: false, known: false,
         hasComponents: false, serviceConflict: false, keyboardRunning: false,
         mouseRunning: false, keyboardFilters: "", mouseFilters: "", detail: ""}
     try {
@@ -51,24 +51,20 @@ GetDriverStatus() {
         }
         if result.serviceConflict {
             result.description := "检测到同名的其他驱动，请勿覆盖。"
-            result.needsAttention := true
         } else if result.pending {
             result.description := "驱动已移除配置，重启电脑后完成恢复。"
         } else if result.partial {
             result.description := "驱动配置不完整，可重新安装或移除。"
-            result.needsAttention := true
         } else if result.installed && result.running {
             result.description := "驱动已安装并正在运行。"
         } else if result.installed {
             result.description := "驱动已安装但尚未加载；若刚安装，请重启电脑。"
-            result.needsAttention := true
         } else {
             result.description := "驱动尚未安装。"
         }
     } catch as err {
         result.description := "暂时无法确认驱动状态。"
         result.detail := err.Message
-        result.needsAttention := true
     }
     return result
 }
@@ -99,7 +95,7 @@ DriverHasFilter(filterList, name) {
 RunDriverOperation(action, installerPath) {
     static busy := false
     result := {ok: false, cancelled: false, exitCode: -1, message: "",
-        needsReboot: false, status: 0}
+        needsReboot: false}
     if action != "install" && action != "uninstall" {
         result.message := "不支持的驱动操作。"
         return result
@@ -117,7 +113,6 @@ RunDriverOperation(action, installerPath) {
     handle := 0
     try {
         before := GetDriverStatus()
-        result.status := before
         if !before.known
             throw Error("无法确认当前驱动配置，操作未启动。" before.detail)
         if before.serviceConflict
@@ -138,7 +133,7 @@ RunDriverOperation(action, installerPath) {
                 : "安装器未能启动：" err.Message
             return result
         }
-        result.status := after := GetDriverStatus()
+        after := GetDriverStatus()
         ; The official utility requests a restart. Do not promise immediate unload.
         result.needsReboot := result.exitCode = 0
         if result.exitCode != 0 {

@@ -7,9 +7,10 @@
 #Include ShortcutConfig.ahk
 #Include ShortcutRecorder.ahk
 #Include AppArtwork.ahk
+#Include TrayWindow.ahk
 ;@Ahk2Exe-SetName Mic Air Voice Button
 ;@Ahk2Exe-SetDescription Mic Air to Doubao voice input
-;@Ahk2Exe-SetVersion 1.0.7.0
+;@Ahk2Exe-SetVersion 1.0.8.0
 ;@Ahk2Exe-SetOrigFilename MicAirDoubao.exe
 
 global AppTitle := "Mic Air 语音按钮"
@@ -93,7 +94,7 @@ ClaimInstance() {
     if A_LastError = 183 {
         DllCall("Kernel32\CloseHandle", "Ptr", S.mutex)
         S.mutex := 0
-        if WinExist(AppTitle " ahk_class AutoHotkeyGUI") {
+        if !RequestExistingTrayWindow() && WinExist(AppTitle " ahk_class AutoHotkeyGUI") {
             WinRestore(AppTitle " ahk_class AutoHotkeyGUI")
             WinActivate(AppTitle " ahk_class AutoHotkeyGUI")
         }
@@ -168,7 +169,7 @@ BuildGui() {
     UI["uninstall"] := ModernButton(g, "x358 y458 w142 h32", "卸载并恢复", "ghost")
     UI["uninstall"].OnEvent("Click", (*) => DriverOperation("uninstall"))
     g.SetFont("s8 c8C9993")
-    g.AddText("x30 y504 w462 h22 Center", "最小化继续运行 · 关闭窗口即停止")
+    g.AddText("x30 y504 w462 h22 Center", "最小化到托盘 · 点击托盘图标恢复")
 
     g.SetFont("s11 bold c29433C")
     UI["advancedControls"].Push(g.AddText("x30 y557 w320 h28 Hidden", "启动豆包的快捷键"))
@@ -187,11 +188,12 @@ BuildGui() {
     g.OnEvent("Close", RequestExit)
     g.OnEvent("Escape", RequestExit)
     A_TrayMenu.Delete()
-    A_TrayMenu.Add("打开控制面板", (*) => g.Show())
+    A_TrayMenu.Add("打开界面", RestoreMainWindow)
     A_TrayMenu.Add("停止并恢复音量键", (*) => StopMapping(true))
     A_TrayMenu.Add()
     A_TrayMenu.Add("退出程序", RequestExit)
-    A_TrayMenu.Default := "打开控制面板"
+    A_TrayMenu.Default := "打开界面"
+    ConfigureTrayWindow(g, RestoreMainWindow)
     A_IconTip := AppTitle
     ; Windows 11 uses rounded top-level corners when available.
     corner := 2
@@ -201,6 +203,16 @@ BuildGui() {
     try DllCall("dwmapi\DwmSetWindowAttribute", "Ptr", g.Hwnd, "UInt", 35, "UInt*", &captionColor, "UInt", 4)
     try DllCall("dwmapi\DwmSetWindowAttribute", "Ptr", g.Hwnd, "UInt", 36, "UInt*", &captionText, "UInt", 4)
     g.Show("w520 h548")
+}
+
+RestoreMainWindow(*) {
+    global UI
+    RestoreTrayWindow(UI["window"], CurrentShortcutWindow)
+}
+
+CurrentShortcutWindow() {
+    dialog := ShortcutRecorderStore.Active
+    return IsObject(dialog) && !dialog.closed ? dialog.window : 0
 }
 
 ToggleAdvanced(forceOpen := false) {
@@ -284,8 +296,6 @@ RefreshDriver() {
                 S.selected := index
             } else if S.savedHid
                 S.notice := "电脑连接发生变化。点击“修复按钮响应”即可重新准备。"
-            else if S.devices.Length
-                S.notice := "暂时无法完成配置。请重新连接接收器，再点“修复按钮响应”。"
             else
                 S.notice := "暂时无法完成配置。请重新连接接收器，再点“修复按钮响应”。"
         } catch as err {
@@ -580,28 +590,15 @@ Log(message) {
 RunSelfTest() {
     global DataDir
     status := GetDriverStatus()
-    report := "Mic Air 1.0.7 self-check`r`nNo hotkeys registered; no keyboard events sent; no driver changes.`r`n"
+    report := "Mic Air 1.0.8 self-check`r`nNo hotkeys registered; no keyboard events sent; no driver changes.`r`n"
     report .= "Assets SHA256 verified.`r`nDriver installed=" status.installed " running=" status.running " pending=" status.pending "`r`n"
     if status.running && !status.pending {
         native := NativeOutput(DataDir "\components\interception.dll")
         try {
             devices := native.Enumerate()
             report .= "Enumerated keyboards=" devices.Length "`r`n"
-            for device in devices
-                report .= device.id ": " device.hid "`r`n"
         } finally
             native.Close()
     }
-    sample := [{id: 1, hid: "ACPI\TEST"}, {id: 2, hid: "USB\TEST"}]
-    if FindDeviceSelection(sample, "USB\TEST") != 2 || FindDeviceSelection(sample, "missing") != 0
-        throw Error("Device matching self-check failed.")
-    sample.Push({id: 3, hid: "USB\TEST"})
-    if FindDeviceSelection(sample, "USB\TEST") != 0
-        throw Error("Ambiguous device matching self-check failed.")
-    report .= "Device matching (exact, missing, duplicate): PASS.`r`n"
-    automaticSample := [{id: 1, hid: "LdVKeyboard"}, {id: 4, hid: "HID\VID_1234&PID_5678"}]
-    if FindDeviceSelection(automaticSample, "") != 2
-        throw Error("Automatic physical device matching self-check failed.")
-    report .= "Automatic physical device selection: PASS.`r`n"
     FileOpen(DataDir "\self-test.txt", "w", "UTF-8").Write(report)
 }

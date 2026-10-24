@@ -1,7 +1,7 @@
 ; AHK v2 x64. Declarative shortcut parsing and output sequencing only.
 ; No hooks are installed, no drivers are loaded and no keys are sent on include.
 ;
-; ParseShortcut(text := "RAlt+Space") -> {canonical, label, keys, mainKey, modifiers}.
+; ParseShortcut(text := "RAlt+Space") -> {canonical, label, keys}.
 ; keys are ordered modifiers then main key, each {code,stateDown,stateUp,name,ahkName}.
 ; Generic Ctrl/Alt/Shift/Win normalize to the corresponding left-side key.
 ; Whitelisted names only: no AHK expressions, braces, vk/sc literals or Send syntax.
@@ -11,9 +11,6 @@
 ; heldState may initially be {}; its keys[] records every attempted key-down.
 ; ReleaseConfiguredKeys(output,heldState) -> bool; failed releases remain in keys[]
 ; and lastError for exit/recovery retries. Both functions preserve device IDs.
-;
-; CaptureShortcutKey(keyName) -> parsed binding; modifier-only presses return 0.
-; Caller must install a keyboard hook if it needs reliable physical modifier state.
 ; Caller should reject sending while any physical modifier/main key is held.
 
 ParseShortcut(canonical := "RAlt+Space") {
@@ -43,13 +40,11 @@ ParseShortcut(canonical := "RAlt+Space") {
     }
     if main = ""
         throw ValueError("请指定一个普通按键。")
-    modifiers := []
     keys := []
     canonical := ""
     label := ""
     for name in ["LCtrl", "RCtrl", "LAlt", "RAlt", "LShift", "RShift", "LWin", "RWin"] {
         if found.Has(name) {
-            modifiers.Push(name)
             keys.Push(ShortcutKeyRecord(name))
             canonical .= name "+"
             label .= ShortcutKeyLabel(name) "＋"
@@ -57,7 +52,7 @@ ParseShortcut(canonical := "RAlt+Space") {
     }
     keys.Push(ShortcutKeyRecord(main))
     return {canonical: canonical main, label: label ShortcutKeyLabel(main),
-        keys: keys, mainKey: main, modifiers: modifiers}
+        keys: keys}
 }
 
 ShortcutNormalizeName(name) {
@@ -121,17 +116,6 @@ ShortcutKeyLabel(name) {
         "Equals", "=", "Comma", ",", "Period", ".", "Slash", "/", "Backslash", "\",
         "Semicolon", ";", "Quote", "'", "Backtick", "``", "LeftBracket", "[", "RightBracket", "]")
     return labels.Has(name) ? labels[name] : name
-}
-
-CaptureShortcutKey(keyName) {
-    name := ShortcutNormalizeName(keyName)
-    if ShortcutIsModifier(name)
-        return 0
-    canonical := ""
-    for modifier in ["LCtrl", "RCtrl", "LAlt", "RAlt", "LShift", "RShift", "LWin", "RWin"]
-        if GetKeyState(modifier, "P")
-            canonical .= modifier "+"
-    return ParseShortcut(canonical name)
 }
 
 ShortcutEnsureHeldState(heldState) {

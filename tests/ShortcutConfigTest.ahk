@@ -33,8 +33,7 @@ try {
         Check(ParseShortcut("F" A_Index).keys.Length = 1, "F1-F24 supported")
     for key in ["A", "9", "Enter", "Tab", "Home", "NumpadEnter", "Numpad7", "Minus", "Quote", "Backtick"]
         Check(ParseShortcut(key).keys[1].code > 0, "Common key " key)
-    Check(CaptureShortcutKey("LControl") = 0, "Modifier-only capture")
-    report .= "PASS Ctrl+Shift+Space, F8, E0 keys, F1-F24, ordinary keys and modifier-only capture.`r`n"
+    report .= "PASS Ctrl+Shift+Space, F8, E0 keys, F1-F24 and ordinary keys.`r`n"
 
     for text in ["", "RAlt", "Ctrl+LCtrl+Space", "LAlt+RAlt+Space", "Space+Ctrl", "Alt++Space",
         "{RAlt down}{Space}", "^!Space", "vkA5", "sc138", "Volume_Up", "F25", "Ctrl+Run('bad')", "A`nB"] {

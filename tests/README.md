@@ -15,8 +15,10 @@ For a portable runtime, pass `-Runtime` or set `AHK_RUNTIME`:
 The runner checks `Main.ahk` with `/Validate` and does **not** run the application's startup code. It then runs:
 
 - `ShortcutConfigTest.ahk`: parsing, left/right modifiers, extended scan codes, exact default output sequence, failure cleanup and release retry. Sends go to an in-memory mock.
+- `NativeOutputTest.ahk`: saved-device matching, missing/ambiguous matches and automatic selection using fake records only. It never constructs `NativeOutput` or loads the driver library.
 - `LifecycleTest.ahk`: extracts an explicit allowlist of application functions into a generated worker with a mock output and mock enable function. Covers failed sends, stopping, persistence errors, editor cancellation and driver-state guards. No installer, native output class, startup code or real enable function is included.
 - `ModernControlsTest.ahk`: constructs hidden controls and draws into a memory bitmap, checking native button properties and GDI resource cleanup. It does not send keyboard input.
+- `TrayWindowTest.ahk`: checks minimize/restore and modal priority with mock windows, plus the native one-click tray notification and exact-identity restore between isolated processes. It only posts messages to its own hidden test window.
 - `AppArtworkTest.ahk`: checks local installation icon discovery and loads the original fallback when an icon is missing or invalid. Installed artwork is read in place, never copied into the project or app data.
 
 Each run writes its own settings, logs and reports under `tests/.results/<run-id>/`. It does not touch `%LOCALAPPDATA%\MicAirDoubao`, start keyboard hooks, register hotkeys, load the driver DLL or install/uninstall drivers. `-ResultsDirectory` can choose another dedicated test-output folder.
