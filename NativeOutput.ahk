@@ -53,8 +53,8 @@ class NativeOutput {
         sent := DllCall(this.api["interception_send"], "Ptr", this.context,
             "Int", id, "Ptr", stroke, "UInt", 1, "CDecl Int")
         if sent != 1
-            throw LocalError("启动语音失败。请打开“设置”，点击“修复按钮响应”。",
-                "Unable to start voice input. Open Settings and click Repair button response.")
+            throw LocalError("启动语音失败。请打开“设置”，点击“重新识别按钮”。",
+                "Unable to start voice input. Open Settings and click Set Up Button Again.")
     }
 
     Close() {

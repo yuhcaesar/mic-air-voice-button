@@ -1,5 +1,27 @@
 # 更新记录
 
+## 1.2.0 — 每台电脑的按钮设置 / Per-computer button setup
+
+中文：
+
+- 驱动安装并重启、重新打开程序后，自动进入首次按钮设置：按 Mic Air 识别按钮，再在向导输入框中按按钮试用。
+- 只有收到按钮事件、完成试用并点击“已启动，完成设置”，才保存本机配置并启用；不自动检测豆包是否正在录音。
+- 点击“没有启动，换一种方式”后，自动尝试下一个本机连接，不显示设备编号或硬件 ID。
+- 每台电脑独立保存验证结果；旧版升级、换电脑、原连接失效或修改快捷键后需重新验证。
+- 设置中的“修复按钮响应”改为“重新识别按钮”。向导输入内容不保存，中英文界面继续保留。
+- 使用强制键盘钩子或 Raw Input Consumer HID 接收按钮。键盘按键模式仍接管所有音量＋；HID 模式只监听已识别设备的媒体事件，但可能同时改变系统音量，界面会明确提示。
+- 不承诺所有电脑兼容。驱动安装仍需管理员权限及重启，向导无法自动解决系统拦截驱动的问题。第三方许可和图片归属保持不变。
+
+English:
+
+- Added a first-use wizard that opens after driver installation, a Windows restart and reopening AirKey. Press Mic Air to identify the button, then press it again with the wizard's input box focused to try voice input.
+- Saves and enables the local configuration only after a button event, a trial and **Yes, finish setup**. AirKey does not automatically detect whether Doubao is recording.
+- **No, try another way** tries the next local connection without exposing device numbers or hardware IDs.
+- Each computer keeps its own verified setup. Upgrading from an older version, moving to another computer, losing the previous connection or changing the shortcut requires verification again.
+- Replaced **Repair Button Response** with **Set Up Button Again**. The wizard does not save input-box contents; both interface languages remain available.
+- Added forced keyboard-hook and Raw Input Consumer HID reception. Keyboard-key mode still handles all Volume Up keys. HID mode listens to the identified device's media events, but may also change system volume; the UI explicitly explains this.
+- Compatibility with every computer is not guaranteed. Driver installation still requires administrator permission and a restart; the wizard cannot automatically resolve a driver blocked by Windows. Third-party licenses and artwork attribution are unchanged.
+
 ## 1.1.0 — AirKey
 
 中文：

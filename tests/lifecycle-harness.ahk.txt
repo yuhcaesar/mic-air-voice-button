@@ -91,6 +91,43 @@ try {
     Pass("StopMapping releases Space before Right Alt")
 
     ResetState()
+    S.button := FakeStopButton()
+    S.hotkey := true ; Test flag only; no live hotkey was registered.
+    S.held.keys := [{device: 2, code: 56, stateUp: 3, name: "RAlt"}]
+    StopMapping(true)
+    CheckEvents(["56:3"], "stop exception cleanup")
+    Check(!S.enabled && !S.resume && S.held.keys.Length = 0 && !A_IsCritical,
+        "Stop exception cannot prevent pause, release or Critical-Off")
+    Check(S.button.calls = 1 && IniRead(ConfigPath, "Mapping", "EnableOnLaunch") = "0",
+        "Stop exception still persists paused state")
+    Check(InStr(Text(S.notice), "按钮监听未完全停止"), "Stop exception remains visible")
+    SendShortcut("must_not_send_after_stop_exception")
+    Check(S.native.events.Length = 1, "Failed listener stop never permits another shortcut")
+    Pass("StopMapping listener exception still pauses, persists, releases and exits Critical")
+
+    ResetState([2])
+    S.button := FakeStopButton()
+    S.hotkey := true
+    SendShortcut("send_fault_with_stop_exception")
+    if !WasPhysicallyBlocked("send fault with stop exception") {
+        CheckEvents(["56:2", "57:0", "57:1", "56:3"], "fault and stop exception")
+        Check(!S.enabled && !S.resume && !S.busy && !A_IsCritical && S.held.keys.Length = 0,
+            "Send fault and listener stop exception still complete cleanup")
+        Check(S.button.calls = 1 && IniRead(ConfigPath, "Mapping", "EnableOnLaunch") = "0",
+            "Fault remains persistently paused after stop exception")
+        Pass("sender fault plus listener Stop exception preserves cleanup and paused state")
+    }
+
+    ResetState([1])
+    S.held.keys := [{device: 2, code: 56, stateUp: 3, name: "RAlt"}]
+    originalNative := S.native
+    Check(!CloseNative() && S.native = originalNative && !originalNative.closed,
+        "CloseNative retains output while a key remains unreleased")
+    Check(CloseNative() && !IsObject(S.native) && originalNative.closed && S.held.keys.Length = 0,
+        "Later successful release permits closing output")
+    Pass("CloseNative keeps the output available for failed-release recovery")
+
+    ResetState()
     SaveShortcut(ParseShortcut("Shift+Ctrl+Space"))
     Check(S.binding.canonical = "LCtrl+LShift+Space", "save canonicalizes modifier order and sides")
     Check(IniRead(ConfigPath, "Mapping", "Shortcut") = "LCtrl+LShift+Space", "save persists canonical shortcut")
@@ -116,6 +153,23 @@ try {
     Check(writeRejected && S.binding.canonical = "RAlt+Space", "failed persistence leaves old in-memory binding")
     Check(IniRead(ConfigPath, "Mapping", "Shortcut") = "RAlt+Space", "failed persistence preserves config")
     Pass("SaveShortcut write failure does not replace active binding")
+
+    ResetState()
+    S.profile := {source: "key", device: "", usagePage: 12, usage: 1,
+        outputHid: "MOCK_ONLY", outputId: 2, topology: ProfileTopology(S.devices), shortcut: "RAlt+Space"}
+    SaveMicProfile(ConfigPath, S.profile, S.machine)
+    LoadMainProfileForTest()
+    Check(IsObject(S.profile), "startup accepts matching verified shortcut")
+    S.binding := ParseShortcut("LCtrl+Space")
+    LoadMainProfileForTest()
+    Check(!IsObject(S.profile), "actual startup rejects profile with different shortcut")
+    S.binding := ParseShortcut("RAlt+Space")
+    LoadMainProfileForTest()
+    SaveShortcut(ParseShortcut("RAlt+Space"))
+    Check(IsObject(S.profile) && IniRead(ConfigPath, "Button", "Verified") = "1", "unchanged shortcut preserves verification")
+    SaveShortcut(ParseShortcut("LCtrl+Space"))
+    Check(!IsObject(S.profile) && IniRead(ConfigPath, "Button", "Verified") = "0", "changed shortcut invalidates previous confirmation")
+    Pass("actual Main startup rejects shortcut mismatch; changed shortcut invalidates verification")
 
     for priorEnabled in [false, true] {
         ResetState()
@@ -245,7 +299,8 @@ ResetState(failures := []) {
         faulted: false, hotkey: false, armed: true, lastVolume: 0,
         held: {keys: []}, binding: ParseShortcut("RAlt+Space"), editing: false, editorResume: false,
         native: MockNative(failures), devices: [{id: 2, hid: "MOCK_ONLY"}], selected: 1,
-        mutex: 0, notice: "", pendingReboot: false, savedHid: "MOCK_ONLY", resume: true}
+        mutex: 0, notice: "", pendingReboot: false, savedHid: "MOCK_ONLY", resume: true,
+        profile: 0, button: 0, settingUp: false, machine: ProfileDigest("LIFECYCLE_TEST_MACHINE")}
     UI := Map()
     EnableRequests := 0
     LanguageApplyRequests := 0
@@ -297,17 +352,29 @@ EnableMapping(*) {
 class MockNative {
     __New(failures) {
         this.events := []
+        this.closed := false
         this.failures := Map()
         for index in failures
             this.failures[index] := true
     }
     Send(id, code, state) {
         global S
-        if S.hotkey
+        if S.hotkey && !(S.button is FakeStopButton)
             throw Error("Safety invariant failed: hotkey must remain false")
         this.events.Push({id: id, code: code, state: state})
         if this.failures.Has(this.events.Length)
             throw Error("MOCK requested failure at event " this.events.Length)
+    }
+    Close() {
+        this.closed := true
+    }
+}
+
+class FakeStopButton {
+    calls := 0
+    Stop() {
+        this.calls++
+        throw Error("Requested mock listener stop failure")
     }
 }
 
@@ -344,4 +411,9 @@ Pass(label) {
 ModernRedraw(*) {
     ; Actual UpdateUI must exit before rendering because the test UI Map is empty.
     throw Error("Safety invariant failed: the test must not render UI controls")
+}
+
+MicSetupActive() {
+    global S
+    return S.settingUp
 }

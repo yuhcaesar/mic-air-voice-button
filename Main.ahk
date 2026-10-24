@@ -9,9 +9,13 @@
 #Include ShortcutRecorder.ahk
 #Include AppArtwork.ahk
 #Include TrayWindow.ahk
+#Include ButtonInput.ahk
+#Include MachineProfile.ahk
+#Include SetupWizard.ahk
+#Include MicSetupController.ahk
 ;@Ahk2Exe-SetName AirKey
 ;@Ahk2Exe-SetDescription AirKey for Insta360 Mic Air and Doubao voice input
-;@Ahk2Exe-SetVersion 1.1.0.0
+;@Ahk2Exe-SetVersion 1.2.0.0
 ;@Ahk2Exe-SetOrigFilename AirKey.exe
 
 global PersonalEdition := false
@@ -22,6 +26,7 @@ global S := {enabled: false, busy: false, maintenance: false, advancedOpen: fals
     faulted: false, hotkey: false, armed: true, lastVolume: 0,
     held: {keys: []}, binding: 0, editing: false, editorResume: false,
     native: 0, devices: [], selected: 0, mutex: 0,
+    button: 0, profile: 0, machine: "", settingUp: false, setup: 0,
     notice: N("启用后，按 Mic Air 按钮即可启动豆包语音。", "Enable the button, then press Mic Air to start Doubao voice input."),
     pendingReboot: false, savedHid: "", resume: false}
 global UI := Map(), ConfigPath := "", LogPath := "", Driver := 0
@@ -59,10 +64,18 @@ try {
         S.resume := false
         Log("Invalid saved shortcut; default restored with mapping paused.")
     }
+    S.machine := GetMachineProfileKey()
+    S.profile := LoadMicProfile(ConfigPath, S.machine)
+    if IsObject(S.profile) && S.profile.shortcut != S.binding.canonical
+        S.profile := 0
     BuildGui()
     RefreshDriver()
-    if S.resume && !TestUI && !S.pendingReboot && DriverReady()
-        EnableMapping()
+    if !TestUI && !S.pendingReboot && DriverReady() {
+        if !IsObject(S.profile) || !S.selected
+            SetTimer(BeginMicSetup, -350)
+        else if S.resume
+            EnableMapping()
+    }
 } catch as err {
     if SelfTest {
         try FileAppend("FAIL: " err.Message "`n", DataDir "\self-test.txt", "UTF-8")
@@ -194,7 +207,7 @@ BuildGui() {
     UI["shortcutHint"] := g.AddText("x30 y632 w462 h23 Hidden", "")
     UI["advancedControls"].Push(UI["shortcutHint"])
     g.SetFont("s9 c29433C")
-    UI["refresh"] := ModernButton(g, "x22 y672 w170 h34 Hidden", "修复按钮响应", "ghost")
+    UI["refresh"] := ModernButton(g, "x22 y672 w220 h34 Hidden", "重新识别按钮", "ghost")
     UI["refresh"].OnEvent("Click", Reconfigure)
     UI["advancedControls"].Push(UI["refresh"])
 
@@ -222,6 +235,7 @@ AppWindowTitle() {
 SwitchLanguage(*) {
     global S, ConfigPath
     if S.busy || S.editing || S.maintenance || S.held.keys.Length
+        || (S.HasOwnProp("settingUp") && S.settingUp)
         return
     try SaveAppLanguage(AppLanguage.Current == "zh" ? "en" : "zh", ConfigPath)
     catch as err {
@@ -248,7 +262,7 @@ ApplyLanguage() {
     UI["language"].Text := L("English", "中文")
     UI["shortcutHeading"].Text := L("启动豆包的快捷键", "Shortcut for Doubao voice input")
     UI["shortcutHint"].Text := L("请与豆包里的快捷键保持一致。", "Use the same shortcut as in your Doubao settings.")
-    UI["refresh"].Text := L("修复按钮响应", "Repair Button Response")
+    UI["refresh"].Text := L("重新识别按钮", "Set Up Button Again")
     UI["editShortcut"].Text := L("修改", "Edit")
     UpdateTrayMenu()
     UpdateUI()
@@ -274,6 +288,8 @@ RestoreMainWindow(*) {
 }
 
 CurrentShortcutWindow() {
+    if IsObject(MicSetupStore.Active) && !MicSetupStore.Active.closed
+        return MicSetupStore.Active.window
     dialog := ShortcutRecorderStore.Active
     return IsObject(dialog) && !dialog.closed ? dialog.window : 0
 }
@@ -290,7 +306,7 @@ ToggleAdvanced(forceOpen := false) {
 
 EditShortcut(*) {
     global S, UI
-    if S.editing || S.busy || S.maintenance || S.held.keys.Length
+    if S.editing || S.busy || S.maintenance || S.held.keys.Length || MicSetupActive()
         return
     S.editorResume := S.enabled
     StopMapping(false)
@@ -307,6 +323,10 @@ SaveShortcut(binding) {
     global S, ConfigPath
     validated := ParseShortcut(binding.canonical)
     IniWrite(validated.canonical, ConfigPath, "Mapping", "Shortcut")
+    if S.HasOwnProp("profile") && IsObject(S.profile) && S.binding.canonical != validated.canonical {
+        InvalidateMicProfile(ConfigPath)
+        S.profile := 0
+    }
     S.binding := validated
     UpdateUI()
 }
@@ -337,7 +357,10 @@ RefreshDriver() {
     if S.maintenance || S.busy
         return
     StopMapping(false)
-    CloseNative()
+    if !CloseNative() {
+        UpdateUI()
+        return
+    }
     Driver := GetDriverStatus()
     pendingAction := IniRead(ConfigPath, "Driver", "PendingAction", "")
     previousBoot := IniRead(ConfigPath, "Driver", "BootId", "")
@@ -354,13 +377,13 @@ RefreshDriver() {
         try {
             S.native := NativeOutput(DataDir "\components\interception.dll")
             S.devices := S.native.Enumerate()
-            index := FindDeviceSelection(S.devices, S.savedHid)
+            index := FindProfileOutput(S.devices, S.profile)
             if index {
                 S.selected := index
-            } else if S.savedHid
-                S.notice := N("电脑连接发生变化。点击“修复按钮响应”即可重新准备。", "Your connected devices have changed. Click Repair Button Response to set up again.")
+            } else if IsObject(S.profile)
+                S.notice := N("电脑连接发生变化，请重新识别按钮。", "The connection changed. Please set up the button again.")
             else
-                S.notice := N("暂时无法完成配置。请重新连接接收器，再点“修复按钮响应”。", "Setup could not finish. Reconnect the receiver, then click Repair Button Response.")
+                S.notice := N("首次使用，按引导识别 Mic Air 按钮。", "First time here? Follow the guide to set up your Mic Air button.")
         } catch as err {
             S.notice := ErrorText(err)
             CloseNative()
@@ -371,40 +394,18 @@ RefreshDriver() {
 }
 
 Reconfigure(*) {
-    global S, ConfigPath
-    if S.busy || S.maintenance || S.pendingReboot || S.held.keys.Length || S.editing
-        return
-    wasEnabled := S.enabled
-    previousHid := S.savedHid
-    S.savedHid := ""
-    RefreshDriver()
-    if DriverReady() && S.selected {
-        S.savedHid := S.devices[S.selected].hid
-        IniWrite(S.savedHid, ConfigPath, "Mapping", "HardwareId")
-        S.notice := N("已重新检测，可以继续使用。", "Setup refreshed. You can continue using the button.")
-        if wasEnabled
-            EnableMapping()
-    } else {
-        S.savedHid := previousHid
-        S.notice := S.pendingReboot ? N("请先重启电脑，再打开本程序。", "Restart your computer, then reopen AirKey.") :
-            !Driver.known ? N("暂时无法确认系统状态，请重新打开程序。", "Could not check the system status. Please reopen AirKey.") :
-            !Driver.installed ? N("请先点击“安装并启用”，完成后重启电脑。", "Click Install & Enable first, then restart your computer.") :
-            N("暂时无法完成配置。请重新连接接收器，或重启电脑后再试。", "Setup could not finish. Reconnect the receiver or restart your computer, then try again.")
-    }
-    UpdateUI()
+    BeginMicSetup()
 }
 
 InstallOrEnable(*) {
     global Driver, S
-    if S.maintenance || S.pendingReboot
+    if S.maintenance || S.pendingReboot || MicSetupActive()
         return
     if DriverReady() {
-        if !S.selected
-            Reconfigure()
-        if S.selected
-            EnableMapping()
+        if !IsObject(S.profile) || !S.selected
+            BeginMicSetup()
         else
-            ToggleAdvanced(true)
+            EnableMapping()
     }
     else
         DriverOperation("install")
@@ -412,10 +413,22 @@ InstallOrEnable(*) {
 
 EnableMapping(*) {
     global S, Driver, ConfigPath
-    if S.enabled || S.maintenance || S.pendingReboot || S.editing || S.held.keys.Length || !DriverReady()
+    if S.enabled || S.maintenance || S.pendingReboot || S.editing || S.held.keys.Length || !DriverReady() || MicSetupActive()
         return
+    if !IsObject(S.profile) {
+        BeginMicSetup()
+        return
+    }
+    ; Re-resolve a verified output after reconnects or a cancelled setup. A stale
+    ; array index must never silently select another keyboard.
+    try {
+        S.devices := IsObject(S.native) ? S.native.Enumerate() : []
+        S.selected := FindProfileOutput(S.devices, S.profile)
+    } catch {
+        S.selected := 0
+    }
     if S.selected < 1 || !IsObject(S.native) {
-        S.notice := N("暂时无法启动。请点击“修复按钮响应”后再试。", "Could not start. Click Repair Button Response, then try again.")
+        S.notice := N("连接已发生变化，请重新识别按钮。", "The connection changed. Please set up the button again.")
         UpdateUI()
         ToggleAdvanced(true)
         return
@@ -427,7 +440,9 @@ EnableMapping(*) {
     }
     try {
         InstallKeybdHook()
-        Hotkey("Volume_Up", VolumeTrigger, "On")
+        if !IsObject(S.button)
+            S.button := MicButtonInput()
+        S.button.Start(S.profile, VolumeTrigger, MicInputFault)
         S.hotkey := true
         S.enabled := true
         S.faulted := false
@@ -437,8 +452,10 @@ EnableMapping(*) {
         S.resume := true
         IniWrite(S.savedHid, ConfigPath, "Mapping", "HardwareId")
         IniWrite(1, ConfigPath, "Mapping", "EnableOnLaunch")
-        S.notice := N("先点击输入框，再按 Mic Air 按钮。`n启用时，键盘上的音量＋也会启动豆包。", "Click a text field, then press the Mic Air button.`nWhile enabled, keyboard Volume Up also starts Doubao.")
-        Log("mapping_enabled keyboard=" S.devices[S.selected].id)
+        S.notice := S.profile.source = "hid"
+            ? N("先点击输入框，再按 Mic Air 按钮。`n此电脑的音量也可能随按钮改变。", "Click a text field, then press the Mic Air button.`nThe button may also change this computer's volume.")
+            : N("先点击输入框，再按 Mic Air 按钮。`n启用时，键盘上的音量＋也会启动豆包。", "Click a text field, then press the Mic Air button.`nWhile enabled, keyboard Volume Up also starts Doubao.")
+        Log("mapping_enabled mode=" S.profile.source " keyboard=" S.devices[S.selected].id)
     } catch as err {
         StopMapping(true)
         S.notice := N("暂时无法启用：{1}", "Could not enable: {1}", ErrorText(err))
@@ -449,32 +466,44 @@ EnableMapping(*) {
 StopMapping(save := true) {
     global S, ConfigPath
     Critical("On")
+    inputStopped := true
+    S.enabled := false
     try {
         if S.hotkey {
-            Hotkey("Volume_Up", "Off")
-            S.hotkey := false
+            try {
+                if S.HasOwnProp("button") && IsObject(S.button)
+                    S.button.Stop()
+                else
+                    Hotkey("Volume_Up", "Off")
+                S.hotkey := false
+            } catch {
+                inputStopped := false
+                Log("button_stop_failed")
+            }
         }
-        S.enabled := false
         SetTimer(RearmVolume, 0)
-        ReleaseHeldKeys()
         if save {
             S.resume := false
             if S.editing
                 S.editorResume := false
             IniWrite(0, ConfigPath, "Mapping", "EnableOnLaunch")
         }
-        S.notice := S.held.keys.Length ? N("释放按键失败，请手动按下并松开设置中的快捷键，再退出程序。", "Could not release the keys. Press and release your configured shortcut manually before exiting.") :
-            N("已停止，音量＋恢复原来的功能。", "Paused. Volume Up works normally again.")
+        S.notice := inputStopped ? N("已停止，音量＋恢复原来的功能。", "Paused. Volume Up works normally again.") :
+            N("已暂停，但按钮监听未完全停止。请退出程序后重新打开。", "Paused, but the button listener could not fully stop. Exit and reopen AirKey.")
         Log("mapping_stopped")
+    } catch as err {
+        S.notice := N("已停止，但设置未能保存：{1}", "Stopped, but the setting could not be saved: {1}", ErrorText(err))
     } finally {
+        ReleaseHeldKeys()
         Critical("Off")
+        UpdateUI()
     }
-    UpdateUI()
 }
 
 VolumeTrigger(*) {
     global S
     S.lastVolume := A_TickCount
+    Log("button_received")
     if !S.enabled || !S.armed || S.busy
         return
     S.armed := false
@@ -498,12 +527,15 @@ SendShortcut(source) {
         for key in ["LAlt", "RAlt", "LCtrl", "RCtrl", "LShift", "RShift", "LWin", "RWin", S.binding.keys[S.binding.keys.Length].ahkName] {
             if GetKeyState(key, "P") {
                 S.notice := N("请先松开键盘上的快捷键，再按 Mic Air 按钮。", "Release the shortcut keys before pressing the Mic Air button.")
+                Log("send_skipped held_key")
                 return
             }
         }
         device := S.devices[S.selected].id
         SendConfiguredShortcut(S.native, device, S.binding, S.held)
-        S.notice := N("先点击输入框，再按 Mic Air 按钮。`n启用时，键盘上的音量＋也会启动豆包。", "Click a text field, then press the Mic Air button.`nWhile enabled, keyboard Volume Up also starts Doubao.")
+        S.notice := S.HasOwnProp("profile") && IsObject(S.profile) && S.profile.source = "hid"
+            ? N("先点击输入框，再按 Mic Air 按钮。`n此电脑的音量也可能随按钮改变。", "Click a text field, then press the Mic Air button.`nThe button may also change this computer's volume.")
+            : N("先点击输入框，再按 Mic Air 按钮。`n启用时，键盘上的音量＋也会启动豆包。", "Click a text field, then press the Mic Air button.`nWhile enabled, keyboard Volume Up also starts Doubao.")
         Log("sequence_delivered source=" source " keyboard=" device " shortcut=" S.binding.canonical)
     } catch as err {
         S.faulted := true
@@ -513,12 +545,19 @@ SendShortcut(source) {
         ReleaseHeldKeys()
         S.busy := false
         if S.faulted {
-            if S.hotkey {
-                Hotkey("Volume_Up", "Off")
-                S.hotkey := false
-            }
             S.enabled := false
             S.resume := false
+            if S.hotkey {
+                try {
+                    if S.HasOwnProp("button") && IsObject(S.button)
+                        S.button.Stop()
+                    else
+                        Hotkey("Volume_Up", "Off")
+                    S.hotkey := false
+                } catch {
+                    Log("button_stop_failed")
+                }
+            }
             try IniWrite(0, ConfigPath, "Mapping", "EnableOnLaunch")
             SetTimer(RearmVolume, 0)
         }
@@ -539,7 +578,7 @@ ReleaseHeldKeys() {
 
 DriverOperation(action) {
     global S, Driver, DataDir, ConfigPath
-    if S.maintenance || S.busy || S.pendingReboot || S.editing || !Driver.known
+    if S.maintenance || S.busy || S.pendingReboot || S.editing || S.held.keys.Length || !Driver.known || MicSetupActive()
         return
     if WinExist("Mic Air → 豆包：驱动发送测试 ahk_class AutoHotkeyGUI") {
         S.notice := N("请先关闭旧版测试窗口，再进行驱动操作。", "Close the older test window before changing the driver.")
@@ -563,6 +602,8 @@ DriverOperation(action) {
             if result.ok && action = "uninstall" {
                 S.savedHid := ""
                 IniDelete(ConfigPath, "Mapping", "HardwareId")
+                S.profile := 0
+                InvalidateMicProfile(ConfigPath)
             }
         }
         S.maintenance := false
@@ -585,17 +626,21 @@ UpdateUI() {
     global UI, S, Driver
     if !UI.Has("window") || !IsObject(Driver)
         return
-    UI["mapping"].Text := S.enabled ? L("● 已开启", "● On") : S.pendingReboot ? L("● 等待重启", "● Restart needed") : L("● 已关闭", "● Off")
+    needsSetup := !IsObject(S.profile) || !S.selected
+    UI["mapping"].Text := S.enabled ? L("● 已开启", "● On") : S.pendingReboot ? L("● 等待重启", "● Restart needed") : DriverReady() && needsSetup ? L("● 待设置", "● Set up required") : L("● 已关闭", "● Off")
     UI["mapping"].SetFont(S.enabled ? "c16816A" : "c63718A")
-    UI["enable"].Text := S.enabled ? L("暂停语音按钮", "Pause Voice Button") : DriverReady() ? (S.selected ? L("启用语音按钮", "Enable Voice Button") : L("修复按钮响应", "Repair Button Response")) : L("安装并启用", "Install && Enable")
+    UI["enable"].Text := S.enabled ? L("暂停语音按钮", "Pause Voice Button") : DriverReady() ? (needsSetup ? L("设置语音按钮", "Set Up Voice Button") : L("启用语音按钮", "Enable Voice Button")) : L("安装并启用", "Install && Enable")
     UI["enable"].Enabled := !S.maintenance && !S.editing && (S.enabled || (Driver.known && !Driver.serviceConflict && !S.pendingReboot && !S.held.keys.Length))
     UI["refresh"].Enabled := !S.maintenance && !S.busy && !S.pendingReboot && !S.held.keys.Length && !S.editing
     UI["editShortcut"].Enabled := !S.maintenance && !S.busy && !S.held.keys.Length && !S.editing
     UI["shortcutSummary"].Text := ShortcutDisplayLabel(S.binding)
     UI["shortcutSetting"].Text := ShortcutDisplayLabel(S.binding)
-    UI["uninstall"].Enabled := Driver.known && !Driver.serviceConflict && !S.maintenance && !S.pendingReboot && (Driver.installed || Driver.running || Driver.partial)
+    UI["uninstall"].Enabled := Driver.known && !Driver.serviceConflict && !S.maintenance && !S.busy && !S.held.keys.Length && !S.pendingReboot && (Driver.installed || Driver.running || Driver.partial)
     UI["notice"].Text := Text(S.notice)
     UI["language"].Enabled := !S.maintenance && !S.busy && !S.editing && !S.held.keys.Length
+    if MicSetupActive()
+        for name in ["enable", "refresh", "editShortcut", "uninstall", "language"]
+            UI[name].Enabled := false
     A_IconTip := L("AirKey · 语音键", "AirKey") " · " (S.enabled ? L("已启用", "On") : L("已停止", "Off"))
     for name in ["enable", "advanced", "help", "uninstall", "refresh", "editShortcut", "language"]
         ModernRedraw(UI[name])
@@ -619,17 +664,22 @@ DriverReady() {
 CloseNative() {
     global S
     ReleaseHeldKeys()
+    if S.held.keys.Length
+        return false
     if IsObject(S.native) {
         S.native.Close()
         S.native := 0
     }
+    return true
 }
 
 Cleanup(*) {
     global S
     try CloseShortcutRecorderForExit()
-    if S.hotkey
-        try Hotkey("Volume_Up", "Off")
+    if MicSetupActive()
+        try FinishMicSetup()
+    if IsObject(S.button)
+        try S.button.Close()
     SetTimer(RearmVolume, 0)
     ReleaseHeldKeys()
     CloseNative()
@@ -654,7 +704,7 @@ Log(message) {
 RunSelfTest() {
     global DataDir
     status := GetDriverStatus()
-    report := "AirKey 1.1.0 self-check`r`nNo hotkeys registered; no keyboard events sent; no driver changes.`r`n"
+    report := "AirKey 1.2.0 self-check`r`nNo hotkeys registered; no keyboard events sent; no driver changes.`r`n"
     report .= "Assets SHA256 verified.`r`nDriver installed=" status.installed " running=" status.running " pending=" status.pending "`r`n"
     if status.running && !status.pending {
         native := NativeOutput(DataDir "\components\interception.dll")

@@ -7,7 +7,7 @@ testDir := A_Args.Length ? A_Args[1] : A_ScriptDir "\.results\lifecycle"
 DirCreate(testDir)
 try {
     source := FileRead(sourcePath, "UTF-8")
-    names := ["SendShortcut", "ReleaseHeldKeys", "StopMapping", "RearmVolume",
+    names := ["SendShortcut", "ReleaseHeldKeys", "StopMapping", "RearmVolume", "CloseNative",
         "UpdateUI", "RequestExit", "DriverReady", "Log", "SaveShortcut", "FinishShortcutEdit", "SwitchLanguage"]
     functions := ""
     for name in names {
@@ -28,6 +28,13 @@ try {
     ; from the generated worker directory or create duplicate definitions.
     shortcutSource := FileRead(shortcutSourcePath, "UTF-8")
     functions .= RegExReplace(shortcutSource, "m)^#Include Localization\.ahk\r?$", "")
+    profileSource := FileRead(A_ScriptDir "\..\MachineProfile.ahk", "UTF-8")
+    functions .= "`r`n" RegExReplace(profileSource, "m)^#Include Localization\.ahk\r?$", "")
+    ; Execute the real startup profile/shortcut consistency guard without any
+    ; other startup statements, registry identity reads or native construction.
+    if !RegExMatch(source, "m)^    S\.profile := LoadMicProfile\(ConfigPath, S\.machine\)\r?\n    if IsObject\(S\.profile\) && S\.profile\.shortcut != S\.binding\.canonical\r?\n        S\.profile := 0", &profileLoad)
+        throw Error("Startup profile guard changed; review the safe extraction boundary")
+    functions .= "`r`nLoadMainProfileForTest() {`r`n    global S, ConfigPath`r`n" profileLoad[0] "`r`n}`r`n"
     harness := FileRead(A_ScriptDir "\lifecycle-harness.ahk.txt", "UTF-8")
     workerPath := testDir "\worker.ahk"
     FileOpen(workerPath, "w", "UTF-8").Write(harness "`r`n" functions)

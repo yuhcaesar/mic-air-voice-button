@@ -1,0 +1,367 @@
+#Requires AutoHotkey v2.0 64-bit
+#SingleInstance Off
+#NoTrayIcon
+#Include %A_ScriptDir%\..\MachineProfile.ahk
+#Include %A_ScriptDir%\..\ShortcutConfig.ahk
+#Include %A_ScriptDir%\..\MicSetupController.ahk
+; Actual controller, actual sender and actual profile persistence. UI, input
+; listener and output are in-memory fakes; no real GUI, hook or driver is loaded.
+global DataDir := A_Args.Length ? A_Args[1] : A_ScriptDir "\.results\mic-controller"
+DirCreate(DataDir)
+global ConfigPath := DataDir "\controller.ini"
+global S := 0, UI := Map("window", {}), Logs := [], EnableRequests := 0
+global Report := "Mic setup controller tests — mock input/output/UI only.`r`n", Skipped := 0
+try {
+    ResetCase()
+    original := FileRead(ConfigPath)
+    BeginMicSetup()
+    Check(S.settingUp && S.setup.stage = "learning" && S.button.learning, "Learning starts without output")
+    ConfirmMicSetup()
+    Check(FileRead(ConfigPath) = original && S.native.events.Length = 0, "Undetected button cannot save")
+    DetectButton()
+    ConfirmMicSetup()
+    Check(!S.setup.tested && FileRead(ConfigPath) = original, "Detected button without actual trial cannot save")
+    S.setup.dialog.focused := false
+    S.setup.notBefore := 0
+    MicSetupPress()
+    Check(S.native.events.Length = 0 && S.setup.dialog.focusRequests = 1
+        && !S.setup.tested, "Focus guard only focuses test input")
+    CancelMicSetup()
+    Pass("learning/detection alone cannot save; unfocused trial cannot send")
+
+    ResetCase()
+    original := FileRead(ConfigPath)
+    BeginMicSetup()
+    DetectButton()
+    S.setup.dialog.loseFocusOnCheck := 3 ; Initial guard, RAlt down, then Space down.
+    if Trial("focus lost during shortcut", false) {
+        Check(S.native.Sequence() = "2:56:2,2:57:1,2:56:3",
+            "Focus loss blocks next down but permits all cleanup key-ups")
+        Check(S.held.keys.Length = 0 && !S.busy && !A_IsCritical,
+            "Focus loss releases keys and exits busy/critical state")
+        Check(S.setup.index = 1 && S.setup.stage = "ready" && !S.setup.tested,
+            "Focus loss retries the same candidate without confirmation")
+        ConfirmMicSetup()
+        Check(FileRead(ConfigPath) = original, "Interrupted trial cannot save")
+        Pass("mid-shortcut focus loss blocks new presses, releases keys and retains the candidate")
+    }
+    CancelMicSetup(false)
+
+    ResetCase()
+    original := FileRead(ConfigPath)
+    BeginMicSetup()
+    DetectButton()
+    if Trial("confirmed output") {
+        Check(S.setup.stage = "confirming" && S.setup.tested && FileRead(ConfigPath) = original, "Actual trial still requires explicit confirmation")
+        ConfirmMicSetup()
+        saved := LoadMicProfile(ConfigPath, S.machine)
+        Check(IsObject(saved) && saved.outputHid = "ACPI\TEST_A" && saved.shortcut = "RAlt+Space", "Explicit confirmation saves tested output")
+        Check(!S.settingUp && EnableRequests = 1 && S.button.stops >= 2, "Successful completion cleans listener and requests enable")
+        Pass("only explicit confirmation after actual mock trial commits profile")
+    } else
+        CancelMicSetup(false)
+
+    ResetCase()
+    original := FileRead(ConfigPath)
+    BeginMicSetup()
+    DetectButton()
+    if Trial("next output") {
+        NextMicOutput()
+        Check(S.setup.index = 2 && S.setup.stage = "ready" && !S.setup.tested, "No advances output and clears trial flag")
+        ConfirmMicSetup()
+        Check(FileRead(ConfigPath) = original, "No does not save and next candidate needs its own trial")
+        if Trial("all outputs exhausted") {
+            NextMicOutput()
+            Check(S.setup.stage = "failed" && FileRead(ConfigPath) = original, "Exhausted outputs show failure without saving")
+            Check(S.native.events[1].device = 2 && S.native.events[5].device = 4, "Each candidate actually tried once")
+            Pass("No advances through every candidate, with no implicit success or save")
+        }
+    }
+    CancelMicSetup(false)
+
+    ResetCase(true)
+    oldProfile := S.profile
+    original := FileRead(ConfigPath)
+    S.native.devices := [S.native.devices[2], S.native.devices[1]]
+    BeginMicSetup()
+    dialog := S.setup.dialog
+    button := S.button
+    CancelMicSetup()
+    Check(!S.settingUp && dialog.closed && button.stops = 1, "Cancellation closes dialog/listener")
+    Check(S.profile = oldProfile && FileRead(ConfigPath) = original && EnableRequests = 1, "Cancellation preserves prior profile and restores enabled request")
+    Check(FindProfileOutput(S.devices, S.profile) = 2, "Retained profile resolves correctly after enumeration reordering")
+    Pass("cancel preserves old profile/configuration, cleans listener/window and retains resolvable output after reordering")
+
+    ResetCase(true)
+    original := FileRead(ConfigPath)
+    oldProfile := S.profile
+    BeginMicSetup()
+    dialog := S.setup.dialog
+    S.button.failStop := true
+    S.held.keys := [{device: 2, code: 56, stateUp: 3, name: "RAlt"}]
+    CancelMicSetup()
+    Check(!S.settingUp && !S.enabled && dialog.closed && S.held.keys.Length = 0,
+        "Listener stop exception still releases keys and closes dialog")
+    Check(EnableRequests = 0 && S.profile = oldProfile && FileRead(ConfigPath) = original,
+        "Failed cancellation cleanup cannot restore enabled mapping or alter profile")
+    Check(InStr(Text(S.notice), "监听未完全停止"), "Cancellation preserves cleanup error notice")
+    Pass("listener Stop exception during cancellation still cleans up and preserves paused/error state")
+
+    ResetCase()
+    BeginMicSetup()
+    DetectButton()
+    if Trial("confirmed setup cleanup failure") {
+        dialog := S.setup.dialog
+        S.button.failStop := true
+        ConfirmMicSetup()
+        Check(!S.settingUp && dialog.closed && !S.enabled && EnableRequests = 0,
+            "Confirmed setup with cleanup failure closes dialog but never enables")
+        Check(IsObject(LoadMicProfile(ConfigPath, S.machine)), "Explicitly confirmed profile remains saved")
+        Check(InStr(Text(S.notice), "监听未完全停止"), "Confirmation preserves cleanup error notice")
+        Pass("confirmation only enables after successful listener cleanup")
+    } else
+        CancelMicSetup(false)
+
+    ResetCase()
+    original := FileRead(ConfigPath)
+    BeginMicSetup()
+    MicLearningTimeout()
+    Check(S.setup.stage = "failed" && !S.button.learning && FileRead(ConfigPath) = original, "Timeout stops detection without saving")
+    ConfirmMicSetup()
+    Check(FileRead(ConfigPath) = original, "Timed-out setup cannot confirm")
+    CancelMicSetup(false)
+    Pass("timeout stops listener and never saves or confirms")
+
+    ResetCase()
+    S.native.failAt := 2
+    original := FileRead(ConfigPath)
+    BeginMicSetup()
+    DetectButton()
+    if Trial("send failure", false) {
+        Check(S.held.keys.Length = 0 && !S.busy && !S.setup.tested, "Failed trial releases attempted keys")
+        Check(S.native.Sequence() = "2:56:2,2:57:0,2:57:1,2:56:3", "Failure cleanup exact reverse key-up sequence")
+        Check(S.setup.index = 2 && S.setup.stage = "ready" && FileRead(ConfigPath) = original, "Failed send advances without saving")
+        ConfirmMicSetup()
+        Check(FileRead(ConfigPath) = original, "Failed send cannot be confirmed")
+        Pass("failed sends release attempted keys, advance candidate and do not save")
+    }
+    CancelMicSetup(false)
+
+    ResetCase()
+    S.native.failAt := 2
+    S.native.failReleases := true
+    original := FileRead(ConfigPath)
+    BeginMicSetup()
+    DetectButton()
+    if Trial("persistent release failure", false) {
+        Check(S.held.keys.Length > 0 && S.setup.stage = "failed" && !S.setup.dialog.canRetry,
+            "Unreleased keys block retry and retain recovery state")
+        attempts := S.native.events.Length
+        StartMicLearning()
+        ConfirmMicSetup()
+        Check(S.native.events.Length = attempts && FileRead(ConfigPath) = original,
+            "Unreleased keys prevent new learning and saving")
+        S.native.failReleases := false
+        ReleaseHeldKeys()
+        Check(S.held.keys.Length = 0, "Retained releases can be retried safely")
+        Pass("persistent release failures retain keys, disable retry and prevent persistence")
+    }
+    CancelMicSetup(false)
+
+    ResetCase(true)
+    original := FileRead(ConfigPath)
+    oldProfile := S.profile
+    BeginMicSetup()
+    DetectButton()
+    if Trial("save failure") {
+        lock := DllCall("Kernel32\CreateFileW", "Str", ConfigPath, "UInt", 0x80000000,
+            "UInt", 1, "Ptr", 0, "UInt", 3, "UInt", 0, "Ptr", 0, "Ptr")
+        Check(lock != -1, "Lock temporary configuration")
+        try ConfirmMicSetup()
+        finally DllCall("Kernel32\CloseHandle", "Ptr", lock)
+        Check(S.settingUp && S.setup.stage = "failed" && S.profile = oldProfile,
+            "Save failure leaves prior in-memory profile")
+        Check(FileRead(ConfigPath) = original && EnableRequests = 0, "Save failure retains disk profile without enabling")
+        Pass("atomic-save failure retains prior disk/memory profile and never enables")
+    }
+    CancelMicSetup(false)
+
+    ResetCase()
+    S.native.devices := [{id: 2, hid: "HID\DUPLICATE"}, {id: 4, hid: "HID\DUPLICATE"}]
+    original := FileRead(ConfigPath)
+    BeginMicSetup()
+    DetectButton()
+    if Trial("duplicate topology changes") {
+        ; The chosen id/HID still exists: only the surrounding topology changed.
+        S.native.devices := [{id: 2, hid: "HID\DUPLICATE"}, {id: 5, hid: "HID\DUPLICATE"}]
+        ConfirmMicSetup()
+        Check(S.setup.stage = "failed" && FileRead(ConfigPath) = original,
+            "Duplicate topology change rejected even with unchanged chosen id/HID")
+        Pass("duplicate-HID topology changes between trial and confirmation refuse save")
+    }
+    CancelMicSetup(false)
+
+    ResetCase()
+    original := FileRead(ConfigPath)
+    BeginMicSetup()
+    DetectButton()
+    if Trial("connection changes") {
+        S.native.devices := [{id: 7, hid: "ACPI\REPLACEMENT"}]
+        ConfirmMicSetup()
+        Check(S.setup.stage = "failed" && FileRead(ConfigPath) = original, "Disappeared output rejected before persistence")
+        Pass("connection change between trial and confirmation refuses save")
+    }
+    CancelMicSetup(false)
+
+    CheckSafeLogs()
+    Report .= "SKIP cases=" Skipped "`r`n"
+    FileOpen(DataDir "\report.txt", "w", "UTF-8").Write(Report)
+    ExitApp(0)
+} catch as err {
+    try CancelMicSetup(false)
+    FileOpen(DataDir "\report.txt", "w", "UTF-8").Write(Report "FAIL: " err.Message "`r`n" err.Stack)
+    ExitApp(1)
+}
+
+ResetCase(prior := false) {
+    global S, Logs, EnableRequests, ConfigPath
+    CheckSafeLogs()
+    Logs := [], EnableRequests := 0
+    if FileExist(ConfigPath)
+        FileDelete(ConfigPath)
+    IniWrite("en", ConfigPath, "UI", "Language")
+    S := {busy: false, maintenance: false, editing: false, enabled: prior, pendingReboot: false,
+        held: {keys: []}, binding: ParseShortcut(), button: 0, native: NativeOutput(),
+        devices: [], selected: 0, savedHid: "", profile: 0, machine: ProfileDigest("TEST_MACHINE_ONLY"),
+        settingUp: false, setup: 0, resume: prior, notice: ""}
+    if prior {
+        S.devices := S.native.Enumerate()
+        S.selected := 1
+        S.profile := {source: "key", device: "", usagePage: 12, usage: 1,
+            outputHid: S.devices[1].hid, outputId: 2,
+            topology: ProfileTopology(S.devices), shortcut: "RAlt+Space"}
+        S.savedHid := S.profile.outputHid
+        SaveMicProfile(ConfigPath, S.profile, S.machine)
+    }
+}
+
+DetectButton() {
+    MicButtonDetected({source: "hid", device: "TEST_RECEIVER_PATH", usagePage: 12, usage: 1})
+}
+
+Trial(label, expectSuccess := true) {
+    global S, Skipped, Report, Logs
+    S.setup.notBefore := 0
+    before := S.native.events.Length
+    MicSetupPress()
+    if S.native.events.Length = before {
+        Check(Logs.Length && Logs[Logs.Length] = "setup_trial_skipped held_key",
+            "A skipped trial must be explained by the actual physical-key guard")
+        Skipped++
+        Report .= "SKIP " label ": a physical modifier or Space was held; no real input sent.`r`n"
+        return false
+    }
+    if expectSuccess
+        Check(S.setup.stage = "confirming" && S.setup.tested, "Actual trial reached confirmation")
+    return true
+}
+
+CheckSafeLogs() {
+    global Logs, DataDir, S
+    for line in Logs
+        Check(!InStr(line, DataDir) && !InStr(line, "TEST_RECEIVER_PATH") && !InStr(line, "ACPI\")
+            && (!IsObject(S) || !InStr(line, S.machine)), "Diagnostic logs omit machine/device identifiers and paths")
+}
+
+ShowMicSetup(*) => MockDialog()
+DriverReady() => true
+UpdateUI(*) {
+}
+StopMapping(*) {
+    global S
+    S.enabled := false
+    ReleaseHeldKeys()
+}
+ReleaseHeldKeys() {
+    global S
+    ReleaseConfiguredKeys(S.native, S.held)
+}
+EnableMapping(*) {
+    global EnableRequests
+    EnableRequests++
+}
+Log(message) {
+    global Logs
+    Logs.Push(message)
+}
+Check(condition, message) {
+    if !condition
+        throw Error(message)
+}
+Pass(label) {
+    global Report
+    Report .= "PASS " label "`r`n"
+}
+
+class MockDialog {
+    focused := true, focusRequests := 0, closed := false, canRetry := true
+    focusChecks := 0, loseFocusOnCheck := 0
+    Listening(*) {
+    }
+    Ready(*) {
+    }
+    Waiting(*) {
+    }
+    Busy(*) {
+    }
+    Failure(message, canRetry := true) {
+        this.canRetry := canRetry
+    }
+    InputFocused(allowBusy := false) {
+        this.focusChecks++
+        if this.loseFocusOnCheck && this.focusChecks >= this.loseFocusOnCheck
+            this.focused := false
+        return this.focused
+    }
+    FocusInput() {
+        this.focusRequests++
+        this.focused := true
+    }
+    Close() {
+        this.closed := true
+    }
+}
+class MicButtonInput {
+    learning := false, running := false, stops := 0, failStop := false
+    Learn(*) {
+        this.learning := true
+    }
+    Start(*) {
+        this.running := true
+    }
+    Stop() {
+        this.stops++
+        if this.failStop
+            throw Error("Requested mock listener stop failure")
+        this.learning := false
+        this.running := false
+    }
+}
+class NativeOutput {
+    __New(*) {
+        this.devices := [{id: 2, hid: "ACPI\TEST_A"}, {id: 4, hid: "HID\VID_TEST_B"}]
+        this.events := [], this.failAt := 0, this.failReleases := false
+    }
+    Enumerate() => this.devices
+    Send(device, code, state) {
+        this.events.Push({device: device, code: code, state: state})
+        if this.events.Length = this.failAt || (this.failReleases && (state & 1))
+            throw Error("Requested mock failure")
+    }
+    Sequence() {
+        result := ""
+        for event in this.events
+            result .= (result = "" ? "" : ",") event.device ":" event.code ":" event.state
+        return result
+    }
+}
