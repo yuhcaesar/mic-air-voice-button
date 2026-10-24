@@ -35,13 +35,13 @@ try {
         Check(ParseShortcut(key).keys[1].code > 0, "Common key " key)
     report .= "PASS Ctrl+Shift+Space, F8, E0 keys, F1-F24 and ordinary keys.`r`n"
 
-    for text in ["", "RAlt", "Ctrl+LCtrl+Space", "LAlt+RAlt+Space", "Space+Ctrl", "Alt++Space",
+    for invalidShortcut in ["", "RAlt", "Ctrl+LCtrl+Space", "LAlt+RAlt+Space", "Space+Ctrl", "Alt++Space",
         "{RAlt down}{Space}", "^!Space", "vkA5", "sc138", "Volume_Up", "F25", "Ctrl+Run('bad')", "A`nB"] {
         rejected := false
-        try ParseShortcut(text)
+        try ParseShortcut(invalidShortcut)
         catch ValueError
             rejected := true
-        Check(rejected, "Reject unsupported syntax " text)
+        Check(rejected, "Reject unsupported syntax " invalidShortcut)
     }
     report .= "PASS invalid, duplicate, media and executable/send syntax rejected.`r`n"
 

@@ -1,4 +1,6 @@
-# Mic Air 语音按钮
+# AirKey · 语音键
+
+**中文** | [English](README.en.md)
 
 把 **Insta360 Mic Air 接收器的音量＋按键**变成豆包输入法的语音快捷键。
 
@@ -24,12 +26,13 @@
 - 默认发送 **右 Alt＋空格**，支持录入其他快捷键，区分左右 Alt、Ctrl、Shift。
 - 自动选择按键发送连接，不需要用户选择键盘编号。
 - 保存本机设置；下次打开程序恢复之前的启用状态。
+- 默认中文，点击主界面右下角的 **English / 中文** 按钮切换语言；记住选择，切换时语音按钮继续工作。
 - 最小化后收进系统托盘；单击托盘图标恢复界面，右键打开菜单。
 - 提供“修复按钮响应”和“卸载并恢复”。
 
 ## 第一次使用
 
-1. 从 [Releases](https://github.com/yuhcaesar/mic-air-voice-button/releases) 下载并打开 `MicAirDoubao.exe`，连接 Mic Air 接收器。
+1. 从 [Releases](https://github.com/yuhcaesar/mic-air-voice-button/releases) 下载并打开 `AirKey.exe`，连接 Mic Air 接收器。
 2. 点击 **安装并启用**，允许 Windows 的管理员提示。
 3. 安装成功后，保存工作并**手动重启 Windows**，再打开程序。
 4. 在豆包输入法中，将语音输入的免按模式快捷键设为 **右 Alt＋空格**。
@@ -38,6 +41,14 @@
 已经安装并加载所需驱动时，可以直接启用。最小化后收进系统托盘并继续运行，单击托盘图标即可恢复界面。图标可能位于 Windows 托盘的“隐藏图标”区域。再次双击 EXE 也会恢复已有窗口，不会多开。
 
 关闭窗口或在托盘菜单选择“退出程序”会停止映射并退出。程序不会自动重启电脑，也不会设置 Windows 开机自启动。
+
+### 语言与升级
+
+AirKey 默认中文。点击主界面右下角的 **English** 按钮即可切换英文；英文界面中点击同一位置的 **中文** 按钮切回。程序会记住选择，无需打开设置、重启程序或暂停已启用的语音按钮。主界面、托盘菜单、快捷键录入窗口和应用自带提示均提供两种语言，“使用说明”会打开当前语言的说明文件。Windows 自带的权限等对话框遵循系统语言。
+
+中文应用标题为 **AirKey · 语音键 — Insta360 Mic Air**，英文为 **AirKey — Insta360 Mic Air**。
+
+从旧版升级时，先退出旧程序，再用 `AirKey.exe` 替换旧 EXE。已安装的驱动无需重装；原有快捷键、启用状态和连接配置继续保存在 `%LOCALAPPDATA%\MicAirDoubao`，目录名保持不变以兼容老用户。仓库地址仍为 `yuhcaesar/mic-air-voice-button`。
 
 ### 修改快捷键
 
@@ -77,7 +88,7 @@
 .\build.ps1
 ```
 
-产物为 `dist\MicAirDoubao.exe`。可用 `-Runtime`、`-Compiler` 指定工具路径，或设置 `AHK_RUNTIME` / `AHK_COMPILER` 环境变量。构建不会安装驱动，也不会运行产物。
+产物为 `dist\AirKey.exe`。可用 `-Runtime`、`-Compiler` 指定工具路径，或设置 `AHK_RUNTIME` / `AHK_COMPILER` 环境变量。构建不会安装驱动，也不会运行产物。
 
 本次发布使用 AutoHotkey **2.0.30 x64** 与 Ahk2Exe **1.1.37.02a2**。第三方依赖版本、许可及来源见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
@@ -117,5 +128,7 @@
 ## 许可与归属
 
 本项目原创代码采用 [MIT License](LICENSE)。第三方组件遵守各自许可；本项目的 MIT 许可不授予 Insta360 或其他第三方商标权。详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
+完整英文版本见 [THIRD_PARTY_NOTICES.en.md](THIRD_PARTY_NOTICES.en.md)；随附的上游许可原文保持不变。
 
 这是一个独立项目，与 Insta360 / 影石及豆包没有官方隶属或背书关系。

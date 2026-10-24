@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$OutputPath = (Join-Path $PSScriptRoot 'dist\MicAirDoubao.exe'),
+    [string]$OutputPath = (Join-Path $PSScriptRoot 'dist\AirKey.exe'),
     [string]$Compiler,
     [string]$Runtime
 )
@@ -31,7 +31,7 @@ if ($validation.ExitCode -ne 0) {
 
 # Build a fresh file before replacing the requested destination. Failed builds
 # cannot be mistaken for a successful build merely because an old EXE exists.
-$temporaryOutput = Join-Path $outputDirectory ('.MicAirDoubao-' + [Guid]::NewGuid().ToString('N') + '.exe')
+$temporaryOutput = Join-Path $outputDirectory ('.AirKey-' + [Guid]::NewGuid().ToString('N') + '.exe')
 $build = Invoke-AhkProcess -Executable $compilerPath `
     -Arguments @('/in', $sourcePath, '/out', $temporaryOutput, '/base', $runtimePath,
         '/icon', $iconPath, '/cp', '65001', '/compress', '0', '/silent', 'verbose') `

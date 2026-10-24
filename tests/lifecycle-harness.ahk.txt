@@ -8,6 +8,7 @@ global LogPath := DataDir "\activity.log"
 global UI := Map(), S := 0, Driver := 0
 global Passed := 0, Skipped := 0
 global EnableRequests := 0
+global LanguageApplyRequests := 0, UIUpdateRequests := 0
 global Report := "Mic Air lifecycle mock tests`r`nNo keyboard hooks, hotkeys, native key sends, driver changes, or real GUI actions.`r`n"
 
 try {
@@ -55,7 +56,7 @@ try {
     if !WasPhysicallyBlocked("release retry failure") {
         CheckEvents(["56:2", "57:0", "57:1", "57:1", "56:3", "57:1"], "release retry failure")
         Check(S.held.keys.Length = 1 && S.held.keys[1].name = "Space" && S.faulted && !S.enabled, "unreleased key remains tracked")
-        Check(InStr(S.notice, "部分按键未能释放"), "release failure notice")
+        Check(InStr(Text(S.notice), "部分按键未能释放"), "release failure notice")
         ReleaseHeldKeys()
         CheckEvents(["56:2", "57:0", "57:1", "57:1", "56:3", "57:1", "57:1"], "later release retry")
         Check(S.held.keys.Length = 0, "later cleanup releases remaining key")
@@ -146,6 +147,71 @@ try {
     Check(S.native.events.Length = 0 && !S.hotkey, "editor stop and cancel perform no input")
     Pass("explicit StopMapping during editing prevents later automatic resume")
 
+    for priorEnabled in [false, true] {
+        ResetState()
+        S.enabled := priorEnabled
+        S.resume := priorEnabled
+        IniWrite(priorEnabled ? 1 : 0, ConfigPath, "Mapping", "EnableOnLaunch")
+        IniWrite("TEST_DEVICE_ONLY", ConfigPath, "Mapping", "HardwareId")
+        IniWrite("preserve-me", ConfigPath, "Driver", "BootId")
+        SaveAppLanguage("zh", ConfigPath)
+        S.notice := N("现有提示", "Existing notice")
+        originalNotice := S.notice
+        originalNative := S.native
+        originalBinding := S.binding
+        originalHeld := S.held
+        beforeState := MappingStateSnapshot()
+        beforeMapping := IniRead(ConfigPath, "Mapping")
+        beforeDriver := IniRead(ConfigPath, "Driver")
+        for code in ["en", "zh"] {
+            SwitchLanguage()
+            Check(AppLanguage.Current = code && IniRead(ConfigPath, "UI", "Language") = code, "SwitchLanguage persists " code)
+            Check(MappingStateSnapshot() = beforeState, "language switch preserves active/paused mapping state")
+            Check(S.native = originalNative && S.binding = originalBinding && S.held = originalHeld, "language switch preserves native, binding and held-state objects")
+            Check(S.notice = originalNotice && Text(S.notice) = (code = "en" ? "Existing notice" : "现有提示"), "existing notice follows new language")
+            Check(IniRead(ConfigPath, "Mapping") = beforeMapping && IniRead(ConfigPath, "Driver") = beforeDriver, "language switch preserves mapping and driver configuration")
+            Check(S.native.events.Length = 0 && !S.hotkey && EnableRequests = 0, "language switch makes no input or enable requests")
+        }
+        Check(LanguageApplyRequests = 2 && UIUpdateRequests = 0, "successful switches apply language exactly once each")
+    }
+    Pass("SwitchLanguage changes both directions while preserving active/paused mapping, objects, notices and configuration")
+
+    for guard in ["busy", "editing", "maintenance", "held"] {
+        ResetState()
+        SaveAppLanguage("zh", ConfigPath)
+        S.notice := N("保留提示", "Keep notice")
+        originalNotice := S.notice
+        if guard = "held"
+            S.held.keys := [{device: 2, code: 56, stateUp: 3, name: "RAlt"}]
+        else
+            S.%guard% := true
+        beforeState := MappingStateSnapshot()
+        beforeConfig := FileRead(ConfigPath, "UTF-8")
+        SwitchLanguage()
+        Check(AppLanguage.Current = "zh" && FileRead(ConfigPath, "UTF-8") = beforeConfig, "guard blocks persistence: " guard)
+        Check(MappingStateSnapshot() = beforeState && S.notice = originalNotice, "guard preserves all state: " guard)
+        Check(LanguageApplyRequests = 0 && UIUpdateRequests = 0 && EnableRequests = 0, "guard does not request work: " guard)
+        Check(S.native.events.Length = 0 && !S.hotkey, "guard does not release or send keys: " guard)
+    }
+    Pass("SwitchLanguage guards busy, editor, maintenance and unreleased keys without changing settings or input state")
+
+    for code in ["zh", "en"] {
+        ResetState()
+        SaveAppLanguage(code, ConfigPath)
+        beforeState := MappingStateSnapshot()
+        beforeConfig := FileRead(ConfigPath, "UTF-8")
+        savedPath := ConfigPath
+        ConfigPath := DataDir "\missing-language-save\settings.ini"
+        try SwitchLanguage()
+        finally ConfigPath := savedPath
+        Check(AppLanguage.Current = code && FileRead(ConfigPath, "UTF-8") = beforeConfig, "failed switch preserves current language and file")
+        Check(MappingStateSnapshot() = beforeState, "failed switch preserves mapping state")
+        Check(LanguageApplyRequests = 0 && UIUpdateRequests = 1, "failed switch only refreshes notice")
+        Check(InStr(Text(S.notice), code = "zh" ? "语言设置未保存：" : "Could not save the language setting:"), "failed switch reports error in current language")
+        Check(S.native.events.Length = 0 && !S.hotkey && EnableRequests = 0, "failed switch makes no input or enable requests")
+    }
+    Pass("SwitchLanguage write failures preserve state and show a translated notice in the previous language")
+
     ResetState()
     S.maintenance := true
     Check(RequestExit() = true, "maintenance Close callback veto")
@@ -173,7 +239,8 @@ try {
 }
 
 ResetState(failures := []) {
-    global S, UI, Driver, ConfigPath, EnableRequests
+    global S, UI, Driver, ConfigPath, EnableRequests, LanguageApplyRequests, UIUpdateRequests
+    AppLanguage.Current := "zh"
     S := {enabled: true, busy: false, maintenance: false, advancedOpen: false,
         faulted: false, hotkey: false, armed: true, lastVolume: 0,
         held: {keys: []}, binding: ParseShortcut("RAlt+Space"), editing: false, editorResume: false,
@@ -181,9 +248,35 @@ ResetState(failures := []) {
         mutex: 0, notice: "", pendingReboot: false, savedHid: "MOCK_ONLY", resume: true}
     UI := Map()
     EnableRequests := 0
+    LanguageApplyRequests := 0
+    UIUpdateRequests := 0
     Driver := {known: true, installed: true, running: true, partial: false, serviceConflict: false}
     IniWrite(1, ConfigPath, "Mapping", "EnableOnLaunch")
     IniWrite("RAlt+Space", ConfigPath, "Mapping", "Shortcut")
+}
+
+MappingStateSnapshot() {
+    global S
+    value := ""
+    for name in ["enabled", "resume", "busy", "maintenance", "editing", "editorResume", "hotkey",
+        "armed", "lastVolume", "faulted", "selected", "savedHid", "pendingReboot", "mutex"]
+        value .= name "=" S.%name% "|"
+    value .= S.binding.canonical "|" S.binding.label "|held=" S.held.keys.Length
+    for key in S.held.keys
+        value .= "|" key.device ":" key.code ":" key.stateUp ":" key.name
+    return value
+}
+
+ApplyLanguage() {
+    ; Count the request; do not rebuild controls or modify the real tray menu.
+    global LanguageApplyRequests
+    LanguageApplyRequests++
+}
+
+UpdateUI() {
+    global UIUpdateRequests
+    UIUpdateRequests++
+    MainUpdateUI()
 }
 
 class FakeWindow {
@@ -234,7 +327,7 @@ CheckEvents(expected, label) {
 
 WasPhysicallyBlocked(label) {
     global S, Skipped, Report
-    if S.native.events.Length = 0 && InStr(S.notice, "请先松开") {
+    if S.native.events.Length = 0 && InStr(Text(S.notice), "请先松开") {
         Skipped++
         Report .= "SKIP " label ": a physical modifier or Space was held; no input sent.`r`n"
         return true

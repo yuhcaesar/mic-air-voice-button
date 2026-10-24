@@ -12,13 +12,16 @@
 ; ReleaseConfiguredKeys(output,heldState) -> bool; failed releases remain in keys[]
 ; and lastError for exit/recovery retries. Both functions preserve device IDs.
 ; Caller should reject sending while any physical modifier/main key is held.
+#Include Localization.ahk
 
 ParseShortcut(canonical := "RAlt+Space") {
     if Type(canonical) != "String" || StrLen(canonical) > 96 || RegExMatch(canonical, "[`r`n{}]")
-        throw ValueError("快捷键格式不正确，请使用 Ctrl+Shift+Space 这样的按键组合。")
+        throw LocalTypedError(ValueError, "快捷键格式不正确，请使用 Ctrl+Shift+Space 这样的按键组合。",
+            "Invalid shortcut format. Use a combination such as Ctrl+Shift+Space.")
     parts := StrSplit(Trim(canonical), "+")
     if parts.Length < 1 || parts.Length > 5
-        throw ValueError("请选择一个普通按键，最多搭配四种修饰键。")
+        throw LocalTypedError(ValueError, "请选择一个普通按键，最多搭配四种修饰键。",
+            "Choose one regular key with up to four modifier keys.")
     found := Map()
     familySeen := Map()
     main := ""
@@ -26,20 +29,22 @@ ParseShortcut(canonical := "RAlt+Space") {
         name := ShortcutNormalizeName(Trim(part))
         if ShortcutIsModifier(name) {
             if index = parts.Length
-                throw ValueError("快捷键还需要一个普通按键，例如空格或 F8。")
+                throw LocalTypedError(ValueError, "快捷键还需要一个普通按键，例如空格或 F8。",
+                    "Add a regular key, such as Space or F8, to the shortcut.")
             family := SubStr(name, 2)
             if familySeen.Has(family)
-                throw ValueError("同一种修饰键只能选择一次。")
+                throw LocalTypedError(ValueError, "同一种修饰键只能选择一次。", "Use each modifier type only once.")
             familySeen[family] := true
             found[name] := true
         } else {
             if index != parts.Length
-                throw ValueError("请把普通按键放在组合的最后，例如 RAlt+Space。")
+                throw LocalTypedError(ValueError, "请把普通按键放在组合的最后，例如 RAlt+Space。",
+                    "Put the regular key last, for example RAlt+Space.")
             main := name
         }
     }
     if main = ""
-        throw ValueError("请指定一个普通按键。")
+        throw LocalTypedError(ValueError, "请指定一个普通按键。", "Choose a regular key.")
     keys := []
     canonical := ""
     label := ""
@@ -65,7 +70,8 @@ ShortcutNormalizeName(name) {
         return StrUpper(name)
     if RegExMatch(name, "i)^numpad[0-9]$")
         return "Numpad" SubStr(name, -1)
-    throw ValueError("不支持这个按键：" (name = "" ? "（空）" : name))
+    throw LocalTypedError(ValueError, "不支持这个按键：{1}", "Unsupported key: {1}",
+        name = "" ? N("（空）", "(empty)") : name)
 }
 
 ShortcutNameAliases() {
@@ -99,7 +105,8 @@ ShortcutKeyRecord(name) {
     ahkName := punctuation.Has(name) ? punctuation[name] : name
     scanCode := GetKeySC(ahkName)
     if scanCode < 1 || scanCode > 0x1FF || (scanCode & 0xFF) = 0
-        throw ValueError("当前键盘布局无法发送这个按键：" ShortcutKeyLabel(name))
+        throw LocalTypedError(ValueError, "当前键盘布局无法发送这个按键：{1}",
+            "The current keyboard layout cannot send this key: {1}", N(ShortcutKeyLabel(name), name))
     ; AHK tags RShift as 0x136 for its own keyboard handling, but the physical
     ; make code is 0x36 without E0 (also confirmed by MAPVK_VK_TO_VSC_EX).
     ; Preserve AHK's E0 flag for real extended keys such as RAlt/NumpadEnter.
@@ -118,9 +125,32 @@ ShortcutKeyLabel(name) {
     return labels.Has(name) ? labels[name] : name
 }
 
+; Keep binding.label/ShortcutKeyLabel stable for stored data and existing callers.
+; UI callers use these display helpers to reflect the selected language.
+ShortcutDisplayLabel(binding) {
+    label := ""
+    for key in binding.keys
+        label .= (label = "" ? "" : L("＋", " + ")) ShortcutDisplayKeyLabel(key.name)
+    return label
+}
+
+ShortcutDisplayKeyLabel(name) {
+    static english := Map("LCtrl", "Left Ctrl", "RCtrl", "Right Ctrl", "LAlt", "Left Alt",
+        "RAlt", "Right Alt", "LShift", "Left Shift", "RShift", "Right Shift",
+        "LWin", "Left Win", "RWin", "Right Win", "Space", "Space", "Backspace", "Backspace",
+        "PgUp", "Page Up", "PgDn", "Page Down", "Up", "Up", "Down", "Down",
+        "Left", "Left", "Right", "Right", "NumpadDot", "Numpad .", "NumpadAdd", "Numpad +",
+        "NumpadSub", "Numpad -", "NumpadMult", "Numpad *", "NumpadDiv", "Numpad /",
+        "NumpadEnter", "Numpad Enter")
+    englishLabel := english.Has(name) ? english[name] : ShortcutKeyLabel(name)
+    if RegExMatch(name, "^Numpad[0-9]$")
+        englishLabel := "Numpad " SubStr(name, -1)
+    return L(ShortcutKeyLabel(name), englishLabel)
+}
+
 ShortcutEnsureHeldState(heldState) {
     if !IsObject(heldState)
-        throw TypeError("heldState must be an object")
+        throw LocalTypedError(TypeError, "按键释放状态必须是对象。", "Held-key state must be an object.")
     if !heldState.HasOwnProp("keys")
         heldState.keys := []
     if !heldState.HasOwnProp("busy")
@@ -132,11 +162,11 @@ ShortcutEnsureHeldState(heldState) {
 SendConfiguredShortcut(output, device, binding, heldState) {
     ShortcutEnsureHeldState(heldState)
     if heldState.busy
-        throw Error("上一次快捷键仍在发送中。")
+        throw LocalError("上一次快捷键仍在发送中。", "The previous shortcut is still being sent.")
     if heldState.keys.Length
-        throw Error("仍有按键等待释放，请先停止映射。")
+        throw LocalError("仍有按键等待释放，请先停止映射。", "Some keys still need to be released. Stop the mapping first.")
     if Type(device) != "Integer" || device < 1 || device > 10
-        throw ValueError("发送设备无效。")
+        throw LocalTypedError(ValueError, "发送设备无效。", "Invalid output device.")
     ; Reparse the canonical data instead of trusting mutable key/stroke records.
     binding := ParseShortcut(binding.canonical)
     heldState.busy := true
@@ -163,7 +193,8 @@ SendConfiguredShortcut(output, device, binding, heldState) {
         heldState.busy := false
     }
     if heldState.keys.Length
-        throw Error("部分按键尚未释放，请停止映射并重试。")
+        throw LocalError("部分按键尚未释放，请停止映射并重试。",
+            "Some keys have not been released. Stop the mapping and try again.")
     return true
 }
 
@@ -189,14 +220,14 @@ ReleaseConfiguredKeys(output, heldState) {
             output.Send(key.device, key.code, key.stateUp)
             heldState.keys.RemoveAt(index)
         } catch as err {
-            failures.Push(ShortcutKeyLabel(key.name) "：" err.Message)
+            failures.Push(L("{1}：{2}", "{1}: {2}", ShortcutDisplayKeyLabel(key.name), err.Message))
         }
         index--
     }
     if failures.Length {
         heldState.lastError := ""
         for message in failures
-            heldState.lastError .= (heldState.lastError = "" ? "" : "；") message
+            heldState.lastError .= (heldState.lastError = "" ? "" : L("；", "; ")) message
         return false
     }
     return true

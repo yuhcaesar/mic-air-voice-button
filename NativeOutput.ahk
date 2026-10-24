@@ -1,4 +1,6 @@
 ﻿; Output-only Interception interface. Never subscribes to keyboard or mouse input.
+#Include Localization.ahk
+
 class NativeOutput {
     __New(dllPath) {
         this.module := 0
@@ -8,17 +10,17 @@ class NativeOutput {
             this.module := DllCall("Kernel32\LoadLibraryExW", "Str", dllPath,
                 "Ptr", 0, "UInt", 0x1100, "Ptr")
             if !this.module
-                throw Error("无法加载按键发送组件。")
+                throw LocalError("无法加载按键发送组件。", "Unable to load the key output component.")
             for name in ["interception_create_context", "interception_destroy_context",
                 "interception_get_hardware_id", "interception_send"] {
                 ptr := DllCall("Kernel32\GetProcAddress", "Ptr", this.module, "AStr", name, "Ptr")
                 if !ptr
-                    throw Error("按键发送组件不完整。")
+                    throw LocalError("按键发送组件不完整。", "The key output component is incomplete.")
                 this.api[name] := ptr
             }
             this.context := DllCall(this.api["interception_create_context"], "CDecl Ptr")
             if !this.context
-                throw Error("驱动接口尚未就绪。请检查驱动状态。")
+                throw LocalError("驱动接口尚未就绪。请检查驱动状态。", "The driver interface is not ready. Check the driver status.")
         } catch as err {
             this.Close()
             throw err
@@ -51,7 +53,8 @@ class NativeOutput {
         sent := DllCall(this.api["interception_send"], "Ptr", this.context,
             "Int", id, "Ptr", stroke, "UInt", 1, "CDecl Int")
         if sent != 1
-            throw Error("启动语音失败。请打开“设置”，点击“修复按钮响应”。")
+            throw LocalError("启动语音失败。请打开“设置”，点击“修复按钮响应”。",
+                "Unable to start voice input. Open Settings and click Repair button response.")
     }
 
     Close() {

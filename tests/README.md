@@ -14,9 +14,10 @@ For a portable runtime, pass `-Runtime` or set `AHK_RUNTIME`:
 
 The runner checks `Main.ahk` with `/Validate` and does **not** run the application's startup code. It then runs:
 
+- `LocalizationTest.ahk`: Chinese defaults, English persistence, invalid-language fallback, failed writes and preservation of mapping/driver settings. Checks dynamic nested messages and both-language shortcut labels against the same exact mock scan-code sequence, including right-side modifiers and extended keys.
 - `ShortcutConfigTest.ahk`: parsing, left/right modifiers, extended scan codes, exact default output sequence, failure cleanup and release retry. Sends go to an in-memory mock.
 - `NativeOutputTest.ahk`: saved-device matching, missing/ambiguous matches and automatic selection using fake records only. It never constructs `NativeOutput` or loads the driver library.
-- `LifecycleTest.ahk`: extracts an explicit allowlist of application functions into a generated worker with a mock output and mock enable function. Covers failed sends, stopping, persistence errors, editor cancellation and driver-state guards. No installer, native output class, startup code or real enable function is included.
+- `LifecycleTest.ahk`: extracts an explicit allowlist of application functions into a generated worker with a mock output and mock enable function, plus the declarative localization and shortcut modules. Covers failed sends, stopping, persistence errors, editor cancellation and driver-state guards. The real `SwitchLanguage` is checked in active/paused states, all four guards and write failures; rendering is counted without changing controls or the tray menu. No installer, native output class, startup code or real enable function is included.
 - `ModernControlsTest.ahk`: constructs hidden controls and draws into a memory bitmap, checking native button properties and GDI resource cleanup. It does not send keyboard input.
 - `TrayWindowTest.ahk`: checks minimize/restore and modal priority with mock windows, plus the native one-click tray notification and exact-identity restore between isolated processes. It only posts messages to its own hidden test window.
 - `AppArtworkTest.ahk`: checks local installation icon discovery and loads the original fallback when an icon is missing or invalid. Installed artwork is read in place, never copied into the project or app data.

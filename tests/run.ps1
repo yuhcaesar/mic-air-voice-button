@@ -24,7 +24,7 @@ if ($validation.ExitCode -ne 0) {
 }
 Write-Host 'PASS Main.ahk and included modules: syntax only; application startup was not executed.'
 
-foreach ($testName in @('ShortcutConfigTest', 'LifecycleTest', 'ModernControlsTest', 'AppArtworkTest', 'NativeOutputTest', 'TrayWindowTest')) {
+foreach ($testName in @('LocalizationTest', 'ShortcutConfigTest', 'LifecycleTest', 'ModernControlsTest', 'AppArtworkTest', 'NativeOutputTest', 'TrayWindowTest')) {
     $testDirectory = Join-Path $ResultsDirectory $testName
     New-Item -ItemType Directory -Path $testDirectory -Force | Out-Null
     $test = Invoke-AhkProcess -Executable $runtimePath `

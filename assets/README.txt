@@ -1,4 +1,6 @@
-Mic Air 语音按钮 v1.0.9
+AirKey · 语音键 v1.1.0
+中文应用标题：AirKey · 语音键 — Insta360 Mic Air
+English: README.en.txt
 
 用途
 把 Mic Air 接收器发出的“音量＋”按键转换成豆包语音的启动快捷键。
@@ -7,7 +9,7 @@ Mic Air 语音按钮 v1.0.9
 程序不录音、不上传数据、不记录普通打字内容。
 
 第一次使用
-1. 把 MicAirDoubao.exe 放到想保留的位置，双击打开。
+1. 把 AirKey.exe 放到想保留的位置，双击打开。
    EXE 已包含运行组件，不需要单独安装 AutoHotkey。
 2. 首次使用点击“安装并启用”，在 Windows 管理员提示中允许。
 3. 安装成功后，保存工作并手动重启 Windows，再打开 EXE。
@@ -17,6 +19,15 @@ Mic Air 语音按钮 v1.0.9
 主界面用带有 Insta360 字样的麦克风示意插图及本机已安装的豆包输入法图标展示“Mic Air 按钮 → 豆包输入法”，
 并显示当前快捷键和开关状态。
 点击同一个主按钮即可启用或暂停。
+
+语言与升级
+默认中文。点击主界面右下角“English”切换英文，再点同一位置“中文”切回。
+程序会记住选择，不用打开设置或重启程序，切换时不会暂停语音按钮。
+主界面、托盘菜单、快捷键录入窗口和应用自带提示均支持两种语言。
+“使用说明”会打开当前语言的说明文件；Windows 自带的权限等对话框遵循系统语言。
+英文应用标题为 AirKey — Insta360 Mic Air。
+从旧版升级时，先退出旧程序，再用 AirKey.exe 替换旧 EXE；已安装的驱动无需重装。
+原有设置继续使用 %LOCALAPPDATA%\MicAirDoubao，保留目录名以兼容老用户。
 
 日常使用
 启用成功后，程序会保存本机配置。下次打开 EXE 会尝试恢复已启用状态。
@@ -82,5 +93,13 @@ Interception 用户态 DLL 与官方安装器原样嵌入，提取后及安装�
 仓库：https://github.com/yuhcaesar/mic-air-voice-button
 下载及对应版本第三方源码：https://github.com/yuhcaesar/mic-air-voice-button/releases
 项目原创代码按 MIT 开源；Interception API 库按 LGPLv3，驱动和安装器遵守上游非商业使用条件。
-商业使用驱动/安装器需另行取得上游作者授权。完整说明解包至 licenses\THIRD_PARTY_NOTICES.md。
+商业使用驱动/安装器需另行取得上游作者授权。
+完整中英文说明分别解包至 licenses\THIRD_PARTY_NOTICES.md 和 licenses\THIRD_PARTY_NOTICES.en.md。
 Release 中 ThirdParty-Sources.zip 提供对应 AutoHotkey 与 Interception 源码；重新构建方法见仓库 README。
+
+从源码构建与测试
+在源码目录安装好 AutoHotkey v2 x64 和 Ahk2Exe 后运行 .\build.ps1，产物为 dist\AirKey.exe。
+可使用 -Runtime、-Compiler 指定工具路径；构建不会安装驱动或运行产物。
+运行 .\tests\run.ps1 可进行本地检查，按键发送由模拟替代，不修改日常设置或驱动。
+修改 Interception DLL 后须同步更新 Main.ahk 的校验值并重新构建；直接替换运行目录的 DLL 会被覆盖。
+完整构建步骤、上游源码及许可说明见仓库 README 和对应 Release。

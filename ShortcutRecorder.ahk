@@ -5,6 +5,7 @@
 ; CloseShortcutRecorderForExit() stops capture/timers and destroys without callbacks.
 ; No native shortcut sends or driver operations. Input is intercepted only after
 ; explicitly clicking Start, and capture stops immediately if the dialog loses focus.
+#Include Localization.ahk
 
 ShowShortcutRecorder(ownerGui, currentBinding, onSaved, onClosed) {
     if IsObject(ShortcutRecorderStore.Active) && !ShortcutRecorderStore.Active.closed {
@@ -50,14 +51,17 @@ class ShortcutRecorderDialog {
         this.pressed := Map()
         this.modifiers := Map()
         this.releaseTimer := ObjBindMethod(this, "CheckReleased")
-        this.readyMessage := "先点击“开始录入”，再按你在豆包中设置的快捷键。"
+        this.readyMessage := L("先点击“开始录入”，再按你在豆包中设置的快捷键。",
+            "Click Start recording, then press the shortcut you set in Doubao.")
+        this.dialogWidth := AppLanguage.Current == "en" ? 560 : 500
+        this.dialogHeight := AppLanguage.Current == "en" ? 464 : 432
         ShortcutRecorderStore.Active := this
         try {
             this.binding := ParseShortcut(IsObject(currentBinding) ? currentBinding.canonical : currentBinding)
             this.Build()
             owner.Opt("+Disabled")
             this.ownerDisabled := true
-            this.window.Show((showWindow ? "" : "Hide ") "w500 h432")
+            this.window.Show((showWindow ? "" : "Hide ") "w" this.dialogWidth " h" this.dialogHeight)
         } catch as err {
             this.Finalize(false)
             throw err
@@ -65,31 +69,40 @@ class ShortcutRecorderDialog {
     }
 
     Build() {
-        g := Gui("+Owner" this.owner.Hwnd " -MinimizeBox -MaximizeBox", "修改快捷键")
+        g := Gui("+Owner" this.owner.Hwnd " -MinimizeBox -MaximizeBox", L("修改快捷键", "Change shortcut"))
         this.window := g
+        contentWidth := this.dialogWidth - 56
+        english := AppLanguage.Current == "en"
+        lowerOffset := english ? 32 : 0
         g.BackColor := "F8FAF9"
         g.MarginX := 28
         g.MarginY := 24
-        g.SetFont("s18 bold c172E2A", "Microsoft YaHei UI")
-        g.AddText("x28 y24 w444 h36", "修改快捷键")
+        g.SetFont("s18 bold c172E2A", L("Microsoft YaHei UI", "Segoe UI"))
+        g.AddText("x28 y24 w" contentWidth " h36", L("修改快捷键", "Change shortcut"))
         g.SetFont("s10 norm c71827B")
-        g.AddText("x30 y72 w440 h42", "请与豆包输入法中的语音快捷键保持一致。`n这里只更改 Mic Air 按钮发出的按键。")
+        g.AddText("x30 y72 w" (contentWidth - 4) " h52", L(
+            "请与豆包输入法中的语音快捷键保持一致。`n这里只更改 Mic Air 按钮发出的按键。",
+            "Match the voice shortcut set in Doubao Input Method.`nThis only changes the keys sent by the Mic Air button."))
         g.SetFont("s9 c71827B")
-        g.AddText("x30 y133 w440 h22", "准备使用的快捷键")
-        g.SetFont("s17 bold c172E2A")
-        this.label := g.AddText("x30 y163 w440 h44", this.binding.label)
+        g.AddText("x30 y133 w" (contentWidth - 4) " h22", L("准备使用的快捷键", "Shortcut to use"))
+        g.SetFont((english ? "s15" : "s17") " bold c172E2A")
+        this.label := g.AddText("x30 y163 w" (contentWidth - 4) " h" (english ? 68 : 44), ShortcutDisplayLabel(this.binding))
         g.SetFont("s9 norm c71827B")
-        this.status := g.AddText("x30 y216 w440 h46", this.readyMessage)
+        this.status := g.AddText("x30 y" (216 + lowerOffset) " w" (contentWidth - 4) " h46", this.readyMessage)
         g.SetFont("s10 bold cFFFFFF")
-        this.record := ModernButton(g, "x28 y276 w444 h44", "开始录入", "primary")
+        this.record := ModernButton(g, "x28 y" (276 + lowerOffset) " w" contentWidth " h44",
+            L("开始录入", "Start recording"), "primary")
         this.record.OnEvent("Click", ObjBindMethod(this, "Begin"))
         g.SetFont("s9 norm c71827B")
-        this.defaults := ModernButton(g, "x22 y330 w226 h32", "恢复默认：右 Alt＋空格", "ghost")
+        this.defaults := ModernButton(g, "x22 y" (330 + lowerOffset) " w" (english ? 286 : 226) " h32",
+            L("恢复默认：右 Alt＋空格", "Reset: Right Alt + Space"), "ghost")
         this.defaults.OnEvent("Click", ObjBindMethod(this, "UseDefault"))
         g.SetFont("s10 norm c29433C")
-        this.cancelButton := ModernButton(g, "x244 y378 w108 h36", "取消", "secondary")
+        this.cancelButton := ModernButton(g, "x" (this.dialogWidth - 256) " y" (378 + lowerOffset) " w108 h36",
+            L("取消", "Cancel"), "secondary")
         this.cancelButton.OnEvent("Click", ObjBindMethod(this, "Cancel"))
-        this.saveButton := ModernButton(g, "x364 y378 w108 h36", "保存", "primary")
+        this.saveButton := ModernButton(g, "x" (this.dialogWidth - 136) " y" (378 + lowerOffset) " w108 h36",
+            L("保存", "Save"), "primary")
         this.saveButton.OnEvent("Click", ObjBindMethod(this, "Save"))
         g.OnEvent("Close", ObjBindMethod(this, "Cancel"))
         g.OnEvent("Escape", ObjBindMethod(this, "Cancel"))
@@ -103,12 +116,13 @@ class ShortcutRecorderDialog {
         InstallKeybdHook()
         this.pressed := Map()
         this.modifiers := Map()
-        this.QueueRelease("start", "请先松开键盘按键，再开始录入。")
+        this.QueueRelease("start", L("请先松开键盘按键，再开始录入。", "Release all keys before recording."))
     }
 
     StartCapture() {
         if this.closed || !WinActive("ahk_id " this.window.Hwnd) {
-            this.readyMessage := "录入已暂停。返回此窗口后，点击“开始录入”。"
+            this.readyMessage := L("录入已暂停。返回此窗口后，点击“开始录入”。",
+                "Recording paused. Return to this window and click Start recording.")
             this.status.Text := this.readyMessage
             this.RefreshButtons()
             return
@@ -120,12 +134,13 @@ class ShortcutRecorderDialog {
         this.hook.OnKeyDown := ObjBindMethod(this, "KeyDown")
         this.hook.OnKeyUp := ObjBindMethod(this, "KeyUp")
         this.capturing := true
-        this.status.Text := "现在按下完整快捷键，松开后即可保存。`n单独按 Esc 取消；左右 Alt、Ctrl、Shift 会分别识别。"
+        this.status.Text := L("现在按下完整快捷键，松开后即可保存。`n单独按 Esc 取消；左右 Alt、Ctrl、Shift 会分别识别。",
+            "Press the full shortcut, then release all keys.`nEsc alone cancels; left/right Alt, Ctrl and Shift are distinct.")
         this.RefreshButtons()
         try this.hook.Start()
         catch as err {
             this.StopCapture()
-            this.status.Text := "无法开始录入：" err.Message
+            this.status.Text := L("无法开始录入：{1}", "Could not start recording: {1}", err.Message)
             this.RefreshButtons()
         }
     }
@@ -142,7 +157,8 @@ class ShortcutRecorderDialog {
         name := GetKeyName(Format("vk{:02X}sc{:03X}", vk, sc))
         try name := ShortcutNormalizeName(name)
         catch ValueError {
-            this.status.Text := "这个按键暂不支持。请使用空格、字母、数字或 F1–F24 等常用键。"
+            this.status.Text := L("这个按键暂不支持。请使用空格、字母、数字或 F1–F24 等常用键。",
+                "This key is not supported. Use Space, letters, numbers, or F1–F24.")
             return
         }
         if ShortcutIsModifier(name) {
@@ -160,13 +176,14 @@ class ShortcutRecorderDialog {
         }
         try candidate := ParseShortcut(canonical name)
         catch ValueError as err {
-            this.status.Text := err.Message "`n松开按键后可重新输入。"
+            this.status.Text := L("{1}`n松开按键后可重新输入。", "{1}`nRelease the keys, then try again.", err.Message)
             return
         }
         this.binding := candidate
-        this.label.Text := candidate.label
-        this.readyMessage := "已记录。确认与豆包设置一致后，点击“保存”。"
-        this.QueueRelease("ready", "已记录，请松开刚才的全部按键。")
+        this.label.Text := ShortcutDisplayLabel(candidate)
+        this.readyMessage := L("已记录。确认与豆包设置一致后，点击“保存”。",
+            "Recorded. Check that this matches Doubao, then click Save.")
+        this.QueueRelease("ready", L("已记录，请松开刚才的全部按键。", "Recorded. Release all keys in the shortcut."))
     }
 
     KeyUp(input, vk, sc) {
@@ -195,29 +212,30 @@ class ShortcutRecorderDialog {
     PauseForFocusLoss() {
         if this.closed || (!this.capturing && !(this.waiting && this.afterRelease = "start"))
             return
-        this.readyMessage := "录入已暂停。返回此窗口后，点击“开始录入”。"
-        this.QueueRelease("ready", "录入已暂停，请松开按键。")
+        this.readyMessage := L("录入已暂停。返回此窗口后，点击“开始录入”。",
+            "Recording paused. Return to this window and click Start recording.")
+        this.QueueRelease("ready", L("录入已暂停，请松开按键。", "Recording paused. Release all keys."))
     }
 
     UseDefault(*) {
         if this.closed || this.waiting
             return
         this.binding := ParseShortcut()
-        this.label.Text := this.binding.label
-        this.readyMessage := "已恢复默认组合。点击“保存”后生效。"
-        this.QueueRelease("ready", "请松开键盘按键。")
+        this.label.Text := ShortcutDisplayLabel(this.binding)
+        this.readyMessage := L("已恢复默认组合。点击“保存”后生效。", "Default shortcut restored. Click Save to apply it.")
+        this.QueueRelease("ready", L("请松开键盘按键。", "Release all keys."))
     }
 
     Save(*) {
         if this.closed || this.capturing || this.waiting
             return
-        this.QueueRelease("save", "请松开键盘按键，随后保存。")
+        this.QueueRelease("save", L("请松开键盘按键，随后保存。", "Release all keys to save."))
     }
 
     Cancel(*) {
         if this.closed
             return true
-        this.QueueRelease("cancel", "请松开键盘按键，随后关闭。")
+        this.QueueRelease("cancel", L("请松开键盘按键，随后关闭。", "Release all keys to close."))
         return true
     }
 
@@ -261,7 +279,7 @@ class ShortcutRecorderDialog {
     RefreshButtons() {
         if this.closed || !IsObject(this.window)
             return
-        this.record.Text := this.capturing ? "正在录入…" : "开始录入"
+        this.record.Text := this.capturing ? L("正在录入…", "Recording…") : L("开始录入", "Start recording")
         this.record.Enabled := !this.capturing && !this.waiting
         this.saveButton.Enabled := !this.capturing && !this.waiting
         this.defaults.Enabled := !this.waiting
@@ -278,7 +296,7 @@ class ShortcutRecorderDialog {
                 SetTimer(this.releaseTimer, 0)
                 this.waiting := false
                 this.afterRelease := ""
-                this.readyMessage := "保存失败：" err.Message
+                this.readyMessage := L("保存失败：{1}", "Could not save: {1}", err.Message)
                 this.status.Text := this.readyMessage
                 this.RefreshButtons()
                 return
