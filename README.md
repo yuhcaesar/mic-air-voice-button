@@ -10,13 +10,13 @@
 
 <table>
   <tr>
-    <td align="center"><img src="assets/mic-air-original.png" width="128" alt="原创圆形麦克风示意插图，侧边按钮可见"><br>按下 Mic Air 侧边按钮</td>
+    <td align="center"><img src="assets/mic-air-original.png" width="128" alt="带有 Insta360 字样的圆形麦克风示意插图，侧边按钮可见"><br>按下 Mic Air 侧边按钮</td>
     <td align="center">→</td>
     <td align="center"><img src="assets/voice-illustration.png" width="112" alt="语音输入示意图"><br>启动豆包输入法语音</td>
   </tr>
 </table>
 
-运行时会优先显示用户电脑上已安装的豆包输入法图标；公开仓库和下载包不附带该品牌图标。上图使用项目原创示意素材。
+运行时会优先显示用户电脑上已安装的豆包输入法图标；公开仓库和下载包不附带该品牌图标。麦克风图是项目示意插图，新增的 “Insta360” 文字用于识别兼容设备，并非官方产品照片。
 
 ## 能做什么
 
@@ -116,6 +116,6 @@
 
 ## 许可与归属
 
-本项目原创代码采用 [MIT License](LICENSE)。随附第三方组件及品牌图形分别适用其自身条款，并不因本仓库的 MIT 许可而改变；详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+本项目原创代码采用 [MIT License](LICENSE)。第三方组件遵守各自许可；本项目的 MIT 许可不授予 Insta360 或其他第三方商标权。详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 这是一个独立项目，与 Insta360 / 影石及豆包没有官方隶属或背书关系。

@@ -10,7 +10,7 @@
 #Include TrayWindow.ahk
 ;@Ahk2Exe-SetName Mic Air Voice Button
 ;@Ahk2Exe-SetDescription Mic Air to Doubao voice input
-;@Ahk2Exe-SetVersion 1.0.8.0
+;@Ahk2Exe-SetVersion 1.0.9.0
 ;@Ahk2Exe-SetOrigFilename MicAirDoubao.exe
 
 global AppTitle := "Mic Air 语音按钮"
@@ -590,7 +590,7 @@ Log(message) {
 RunSelfTest() {
     global DataDir
     status := GetDriverStatus()
-    report := "Mic Air 1.0.8 self-check`r`nNo hotkeys registered; no keyboard events sent; no driver changes.`r`n"
+    report := "Mic Air 1.0.9 self-check`r`nNo hotkeys registered; no keyboard events sent; no driver changes.`r`n"
     report .= "Assets SHA256 verified.`r`nDriver installed=" status.installed " running=" status.running " pending=" status.pending "`r`n"
     if status.running && !status.pending {
         native := NativeOutput(DataDir "\components\interception.dll")

@@ -1,8 +1,31 @@
-# Original microphone artwork
+# Microphone illustration and device label
 
-`mic-air-original.png` is an original generic microphone concept illustration generated from the text prompt below with the built-in image_gen tool on 2026-10-24. No input image, product photograph, reference render, logo, or brand artwork was supplied. No CLI fallback or raster post-processing was used.
+The base illustration for `mic-air-original.png` was generated from the text prompt below with the built-in image_gen tool on 2026-10-24. No input image, product photograph, reference render, logo, or brand artwork was supplied for that base image. The unlabelled base is preserved in the v1.0.8 Git tag (SHA256 `75AB1FB533C539CF347959365D0E900E675C477341BDCFB96EDB2547C4984DF2`).
 
-The image depicts a small round wireless microphone and a side button for use as a UI illustration. It is not an official product image and does not reproduce a brand mark. The generated alpha channel is preserved.
+For v1.0.9, the same built-in tool edited that project illustration to add the ordinary text `Insta360` on its front face, at the user's request, to identify the compatible device. Only the project illustration was supplied as the edit target; no official product photograph or logo asset was supplied. This is a labelled concept illustration, not an official product photograph or an endorsement. Third-party names and trademarks remain with their respective rights holders; the project does not grant trademark rights. The generated alpha channel is preserved. No CLI fallback or raster post-processing was used.
+
+The first label edit was then revised with the same built-in tool: the user requested much larger lettering at the centre of the circular face. Both edit prompts are recorded below. The final asset preserves the generated transparent alpha without raster post-processing.
+
+## Final label placement prompt (v1.0.9)
+
+```text
+Use case: precise-object-edit.
+Input image 1 is the EDIT TARGET: an existing transparent microphone illustration with the word Insta360 on it.
+User correction: the lettering is too small and sits off-center. Change ONLY the lettering size and placement. Remove the existing small lettering and put the exact word "Insta360" in MUCH LARGER, bold light-silver/off-white letters across the EXACT VISUAL CENTER of the ROUND FRONT FACE of the microphone. Center on the circular face itself, not on the entire image or on the blank area left of the diagonal grooves. The word should span about 70 to 75 percent of the visible front-face width, crossing the middle diagonal grooves naturally; its horizontal midpoint must match the face midpoint, and its vertical midpoint must lie at the mid-height of the face. Move it substantially right and down compared with the current lettering. The text must feel dominant, balanced, and immediately legible at a 128-pixel icon size. Keep the full word on one line. Use a clean heavy sans-serif with a simple shallow raised/printed finish and an approximately level baseline, with only the subtle perspective needed to sit on the face. Exact spelling: "Insta360".
+Keep every other element unchanged: whole microphone shape, composition, transparent margins, side button, blue LED, grooves, camera angle, perspective, material, shading, and lighting. Do not change the microphone body into a different product. Do not add any other text, emblem, badge, border or object. Preserve genuinely transparent alpha outside the object; no opaque background or checkerboard. Square transparent PNG.
+```
+
+## Initial label edit prompt (v1.0.9)
+
+```text
+Use case: precise-object-edit.
+Asset type: transparent PNG microphone illustration for a Windows desktop app, displayed at 128 x 128 pixels.
+Input image 1 is the EDIT TARGET: the project's existing generic round microphone illustration. It is not an official photograph.
+Primary request: add the exact text "Insta360" to the FRONT FACE of this existing microphone, so users can identify the compatible device immediately. Make the inscription large enough to stay clearly readable when the whole image is reduced to 128 pixels. Use a clean bold ordinary sans-serif, light silver/off-white lettering, sitting naturally on the microphone surface with subtle printed or shallow raised appearance. It should run across the central front face below the blue status LED, with very slight perspective matching that surface. Exact spelling and capitalization: I n s t a 3 6 0, joined as "Insta360".
+Keep unchanged: microphone silhouette, shape, angle, camera position, side button, blue LED, existing diagonal grooves, material texture, lighting, overall scale, margins, and transparent background. This is a single targeted text addition to the supplied image. Preserve the existing illustration rather than redesigning it into an official product render.
+Background: genuinely transparent alpha outside the microphone. No opaque background, checkerboard, floor, cast shadow, extra shapes, badges, captions, or text outside the device.
+Constraints: the only new element is the exact word "Insta360" on the microphone front. Do not add a front button, additional logo graphic, company icon, slogan, copyright mark, or any additional words. Output a square PNG with transparent background.
+```
 
 ## Application icon
 
@@ -14,7 +37,7 @@ To regenerate the icon on Windows:
 .\scripts\New-AppIcon.ps1
 ```
 
-## Final microphone generation prompt
+## Base microphone generation prompt (v1.0.8)
 
 ```text
 Use case: stylized-concept.
