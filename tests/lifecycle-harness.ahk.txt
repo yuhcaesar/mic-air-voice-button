@@ -1,0 +1,254 @@
+#Requires AutoHotkey v2.0 64-bit
+#SingleInstance Off
+#NoTrayIcon
+; No hook is installed. Native sends are replaced by the in-memory mock below.
+global DataDir := A_ScriptDir
+global ConfigPath := DataDir "\settings.ini"
+global LogPath := DataDir "\activity.log"
+global UI := Map(), S := 0, Driver := 0
+global Passed := 0, Skipped := 0
+global EnableRequests := 0
+global Report := "Mic Air lifecycle mock tests`r`nNo keyboard hooks, hotkeys, native key sends, driver changes, or real GUI actions.`r`n"
+
+try {
+    ResetState()
+    SendShortcut("normal_mock")
+    if WasPhysicallyBlocked("normal sequence") {
+        ; Actual function honored the user's held key; do not override it.
+    } else {
+        CheckEvents(["56:2", "57:0", "57:1", "56:3"], "normal sequence")
+        Check(S.enabled && !S.busy && !S.faulted, "normal final state")
+        Check(S.held.keys.Length = 0, "normal keys released")
+        Pass("default RAlt+Space exact driver event order and final state")
+    }
+
+    ResetState()
+    S.binding := ParseShortcut("LCtrl+LShift+Space")
+    SendShortcut("custom_ctrl_shift_mock")
+    if !WasPhysicallyBlocked("LCtrl+LShift+Space sequence") {
+        CheckEvents(["29:0", "42:0", "57:0", "57:1", "42:1", "29:1"], "custom sequence")
+        Check(S.enabled && !S.busy && !S.faulted && S.held.keys.Length = 0, "custom final state")
+        Pass("LCtrl+LShift+Space through actual Main sender")
+    }
+
+    expectations := [
+        ["56:2", "56:3"],
+        ["56:2", "57:0", "57:1", "56:3"],
+        ["56:2", "57:0", "57:1", "57:1", "56:3"],
+        ["56:2", "57:0", "57:1", "56:3", "56:3"]]
+    Loop 4 {
+        step := A_Index
+        ResetState([step])
+        SendShortcut("failure_step_" step)
+        if WasPhysicallyBlocked("failure step " step)
+            continue
+        CheckEvents(expectations[step], "failure step " step)
+        Check(S.faulted && !S.enabled && !S.busy, "fault disables mapping")
+        Check(!S.resume && IniRead(ConfigPath, "Mapping", "EnableOnLaunch") = "0", "fault persists disabled state")
+        Check(S.held.keys.Length = 0, "fault releases held keys")
+        Check(!S.hotkey, "test never activated hotkey")
+        Pass("send failure step " step ": cleanup and persistent disable")
+    }
+
+    ResetState([3, 4, 6])
+    SendShortcut("space_release_retry_failure")
+    if !WasPhysicallyBlocked("release retry failure") {
+        CheckEvents(["56:2", "57:0", "57:1", "57:1", "56:3", "57:1"], "release retry failure")
+        Check(S.held.keys.Length = 1 && S.held.keys[1].name = "Space" && S.faulted && !S.enabled, "unreleased key remains tracked")
+        Check(InStr(S.notice, "部分按键未能释放"), "release failure notice")
+        ReleaseHeldKeys()
+        CheckEvents(["56:2", "57:0", "57:1", "57:1", "56:3", "57:1", "57:1"], "later release retry")
+        Check(S.held.keys.Length = 0, "later cleanup releases remaining key")
+        Pass("release retry failure remains tracked and recoverable")
+    }
+
+    ResetState()
+    StopMapping(true)
+    SendShortcut("after_stop_must_not_send")
+    Check(!S.enabled && !S.resume && !S.hotkey, "stop clears active state")
+    Check(S.native.events.Length = 0, "stopped mapping cannot send")
+    Check(IniRead(ConfigPath, "Mapping", "EnableOnLaunch") = "0", "stop persists disabled state")
+    Pass("StopMapping prevents further sends and persists disabled state")
+
+    for guard in ["busy", "maintenance", "editing", "missing_device"] {
+        ResetState()
+        if guard = "missing_device"
+            S.selected := 0
+        else
+            S.%guard% := true
+        SendShortcut("guard_" guard)
+        Check(S.native.events.Length = 0, "guard blocks send: " guard)
+    }
+    Pass("SendShortcut guards block busy, maintenance, editing, and missing device states")
+
+    ResetState()
+    S.held.keys := [{device: 2, code: 56, stateUp: 3, name: "RAlt"},
+        {device: 2, code: 57, stateUp: 1, name: "Space"}]
+    StopMapping(true)
+    CheckEvents(["57:1", "56:3"], "stop releases held keys")
+    Check(S.held.keys.Length = 0, "stop cleanup clears held keys")
+    Pass("StopMapping releases Space before Right Alt")
+
+    ResetState()
+    SaveShortcut(ParseShortcut("Shift+Ctrl+Space"))
+    Check(S.binding.canonical = "LCtrl+LShift+Space", "save canonicalizes modifier order and sides")
+    Check(IniRead(ConfigPath, "Mapping", "Shortcut") = "LCtrl+LShift+Space", "save persists canonical shortcut")
+    Check(S.native.events.Length = 0 && !S.hotkey, "save performs no native input")
+    Pass("SaveShortcut validates and persists custom binding without input")
+
+    invalidRejected := false
+    try SaveShortcut({canonical: "Ctrl+{Space}"})
+    catch ValueError
+        invalidRejected := true
+    Check(invalidRejected, "invalid save is rejected")
+    Check(S.binding.canonical = "LCtrl+LShift+Space" && IniRead(ConfigPath, "Mapping", "Shortcut") = "LCtrl+LShift+Space", "invalid save leaves old binding intact")
+    Pass("invalid SaveShortcut preserves previous memory and configuration")
+
+    ResetState()
+    savedPath := ConfigPath
+    ConfigPath := DataDir "\missing-parent\settings.ini"
+    writeRejected := false
+    try SaveShortcut(ParseShortcut("LCtrl+LShift+Space"))
+    catch OSError
+        writeRejected := true
+    finally ConfigPath := savedPath
+    Check(writeRejected && S.binding.canonical = "RAlt+Space", "failed persistence leaves old in-memory binding")
+    Check(IniRead(ConfigPath, "Mapping", "Shortcut") = "RAlt+Space", "failed persistence preserves config")
+    Pass("SaveShortcut write failure does not replace active binding")
+
+    for priorEnabled in [false, true] {
+        ResetState()
+        S.enabled := false
+        S.editing := true
+        S.editorResume := priorEnabled
+        UI := Map("window", FakeWindow())
+        Driver := 0 ; UpdateUI remains inert while FinishShortcutEdit uses FakeWindow.
+        stagedOnly := ParseShortcut("LCtrl+LShift+Space")
+        FinishShortcutEdit()
+        Check(!S.editing && S.binding.canonical = "RAlt+Space", "cancel retains active binding")
+        Check(IniRead(ConfigPath, "Mapping", "Shortcut") = "RAlt+Space", "cancel retains persisted binding")
+        Check(UI["window"].options.Length = 1 && UI["window"].options[1] = "-Disabled", "editor finish enables parent")
+        Check(EnableRequests = (priorEnabled ? 1 : 0), "editor finish requests previous enable state")
+        Check(S.native.events.Length = 0 && !S.hotkey, "cancel performs no native input")
+    }
+    Pass("FinishShortcutEdit cancel preserves binding and restores prior state request (mock enable)")
+
+    ResetState()
+    S.enabled := false
+    S.editing := true
+    S.editorResume := true
+    StopMapping(true)
+    UI := Map("window", FakeWindow())
+    Driver := 0
+    FinishShortcutEdit()
+    Check(!S.editorResume && EnableRequests = 0 && !S.enabled, "explicit stop during editing overrides previous enabled state")
+    Check(IniRead(ConfigPath, "Mapping", "EnableOnLaunch") = "0", "editor stop remains persisted")
+    Check(S.native.events.Length = 0 && !S.hotkey, "editor stop and cancel perform no input")
+    Pass("explicit StopMapping during editing prevents later automatic resume")
+
+    ResetState()
+    S.maintenance := true
+    Check(RequestExit() = true, "maintenance Close callback veto")
+    Pass("maintenance Close returns true")
+
+    ResetState()
+    Check(DriverReady(), "healthy mock driver is ready")
+    Driver.partial := true
+    Check(!DriverReady(), "partial configuration is not ready")
+    Driver.partial := false
+    Driver.known := false
+    Check(!DriverReady(), "unknown configuration is not ready")
+    Driver.known := true
+    Driver.serviceConflict := true
+    Check(!DriverReady(), "service conflict is not ready")
+    Pass("driver readiness rejects partial, unknown, and conflicting states")
+
+    Report .= "`r`nPASS cases=" Passed " SKIP cases=" Skipped "`r`n"
+    FileOpen(DataDir "\report.txt", "w", "UTF-8").Write(Report)
+    ExitApp(0)
+} catch as err {
+    Report .= "`r`nFAIL: " err.Message "`r`n" err.Stack "`r`n"
+    FileOpen(DataDir "\report.txt", "w", "UTF-8").Write(Report)
+    ExitApp(1)
+}
+
+ResetState(failures := []) {
+    global S, UI, Driver, ConfigPath, EnableRequests
+    S := {enabled: true, busy: false, maintenance: false, advancedOpen: false,
+        faulted: false, hotkey: false, armed: true, lastVolume: 0,
+        held: {keys: []}, binding: ParseShortcut("RAlt+Space"), editing: false, editorResume: false,
+        native: MockNative(failures), devices: [{id: 2, hid: "MOCK_ONLY"}], selected: 1,
+        mutex: 0, notice: "", pendingReboot: false, savedHid: "MOCK_ONLY", resume: true}
+    UI := Map()
+    EnableRequests := 0
+    Driver := {known: true, installed: true, running: true, partial: false, serviceConflict: false}
+    IniWrite(1, ConfigPath, "Mapping", "EnableOnLaunch")
+    IniWrite("RAlt+Space", ConfigPath, "Mapping", "Shortcut")
+}
+
+class FakeWindow {
+    __New() {
+        this.options := []
+    }
+    Opt(options) {
+        this.options.Push(options)
+    }
+}
+
+EnableMapping(*) {
+    ; The real hook-registering Main function is deliberately not included.
+    global EnableRequests
+    EnableRequests++
+}
+
+class MockNative {
+    __New(failures) {
+        this.events := []
+        this.failures := Map()
+        for index in failures
+            this.failures[index] := true
+    }
+    Send(id, code, state) {
+        global S
+        if S.hotkey
+            throw Error("Safety invariant failed: hotkey must remain false")
+        this.events.Push({id: id, code: code, state: state})
+        if this.failures.Has(this.events.Length)
+            throw Error("MOCK requested failure at event " this.events.Length)
+    }
+}
+
+Check(condition, message) {
+    if !condition
+        throw Error(message)
+}
+
+CheckEvents(expected, label) {
+    global S
+    Check(S.native.events.Length = expected.Length, label ": event count")
+    for index, value in expected {
+        event := S.native.events[index]
+        Check(event.id = 2 && event.code ":" event.state = value, label ": event " index)
+    }
+}
+
+WasPhysicallyBlocked(label) {
+    global S, Skipped, Report
+    if S.native.events.Length = 0 && InStr(S.notice, "请先松开") {
+        Skipped++
+        Report .= "SKIP " label ": a physical modifier or Space was held; no input sent.`r`n"
+        return true
+    }
+    return false
+}
+
+Pass(label) {
+    global Passed, Report
+    Passed++
+    Report .= "PASS " label "`r`n"
+}
+
+ModernRedraw(*) {
+    ; Actual UpdateUI must exit before rendering because the test UI Map is empty.
+    throw Error("Safety invariant failed: the test must not render UI controls")
+}

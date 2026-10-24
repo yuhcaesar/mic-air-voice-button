@@ -1,0 +1,13 @@
+/dist/
+/.build/
+/tests/.results/
+*.log
+settings.ini
+activity.log*
+build-errors.log
+build.log
+*.tmp
+.DS_Store
+Thumbs.db
+.env
+.env.*
