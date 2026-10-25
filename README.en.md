@@ -68,6 +68,10 @@ Open **Settings → Edit → Start Recording**, press the shortcut configured in
 
 If the button stops responding or you need to set it up again, open **Settings → Set Up Button Again**. The wizard detects the Mic Air button again and lets you try the available connections. It saves the new result only after you click **Both work, finish setup**. Your chosen shortcut stays the same, and AirKey does not automatically decide whether Doubao started.
 
+### Diagnose an unresponsive older version
+
+The standalone [AirKey Button Diagnostics tool](diagnostics/README.en.md) checks raw signals, legacy input handling, system hotkeys, keyboard hooks, and shortcut output. It creates a report without personal identifiers and does not install drivers or change AirKey settings. [Download the diagnostic tool](https://github.com/yuhcaesar/mic-air-voice-button/releases/tag/diagnostics-v0.1.0).
+
 ### Restore Volume Up / uninstall
 
 - Temporarily stop voice activation: click **Pause Voice Button**. This also removes the volume guard.

@@ -1,0 +1,6 @@
+/dist/
+/.build/
+/AirKey-Reports/
+/tests/.results/
+*.log
+*.tmp
