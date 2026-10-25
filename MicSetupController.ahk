@@ -22,7 +22,7 @@ BeginMicSetup(*) {
         priorEnabled: wasEnabled, tested: false, notBefore: 0}
     try {
         S.setup.dialog := ShowMicSetup(UI["window"], CancelMicSetup, StartMicLearning,
-            ConfirmMicSetup, NextMicOutput)
+            ConfirmMicSetup, NextMicOutput, MicSetupVolumeIssue)
         StartMicLearning()
     } catch as err {
         CancelMicSetup(false)
@@ -51,12 +51,12 @@ StartMicLearning(*) {
         S.setup.profile := 0
         S.setup.stage := "learning"
         S.setup.dialog.Listening()
-        S.button := MicButtonInput()
+        S.button := MicButtonInput(DataDir "\components\volume-guard.dll")
         S.button.Learn(MicButtonDetected)
         SetTimer(MicLearningTimeout, -30000)
         Log("setup_listening")
     } catch as err {
-        MicInputFault(ErrorText(err))
+        MicInputFault(ErrorText(err), "learn_start")
     }
 }
 
@@ -64,7 +64,7 @@ MicLearningTimeout() {
     global S
     if MicSetupActive() && S.setup.stage = "learning"
         MicInputFault(N("还没识别到按钮。请确认接收器已连接，再点击重试。",
-            "The button has not been identified. Check the receiver connection, then retry."))
+            "The button has not been identified. Check the receiver connection, then retry."), "learn_timeout")
 }
 
 MicButtonDetected(profile) {
@@ -79,7 +79,7 @@ MicButtonDetected(profile) {
         S.button.Start(profile, MicSetupPress, MicInputFault)
         PrepareMicTrial()
     } catch as err
-        MicInputFault(ErrorText(err))
+        MicInputFault(ErrorText(err), "input_start")
 }
 
 PrepareMicTrial() {
@@ -179,6 +179,8 @@ ConfirmMicSetup(*) {
         profile.outputId := chosen.id
         profile.topology := ProfileTopology(currentDevices)
         profile.shortcut := S.binding.canonical
+        ; Only the explicit "both normal" confirmation establishes this flag.
+        profile.volumeVerified := true
         SaveMicProfile(ConfigPath, profile, S.machine)
         S.profile := profile
         S.savedHid := profile.outputHid
@@ -189,8 +191,17 @@ ConfirmMicSetup(*) {
         if FinishMicSetup()
             EnableMapping()
     } catch as err {
-        MicInputFault(N("设置没有保存：{1}", "Setup was not saved: {1}", ErrorText(err)))
+        MicInputFault(N("设置没有保存：{1}", "Setup was not saved: {1}", ErrorText(err)), "save")
     }
+}
+
+MicSetupVolumeIssue(*) {
+    global S
+    if !MicSetupActive() || S.setup.stage != "confirming" || S.busy
+        return
+    S.setup.tested := false
+    MicInputFault(N("音量仍在变化，本次设置没有保存。请点击重试重新识别；若仍出现此问题，请取消设置。",
+        "The volume still changes, so this setup was not saved. Retry button detection; cancel setup if it still happens."), "volume_changed")
 }
 
 FinishMicSetup() {
@@ -249,12 +260,12 @@ class MicSetupOutput {
     }
 }
 
-MicInputFault(message) {
+MicInputFault(message, stage := "input") {
     global S, ConfigPath
     SetTimer(MicLearningTimeout, 0)
     if IsObject(S.button)
         try S.button.Stop()
-    Log("button_input_fault")
+    Log("button_input_fault stage=" stage)
     if MicSetupActive() {
         S.setup.stage := "failed"
         S.setup.tested := false

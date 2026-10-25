@@ -18,6 +18,10 @@ try {
             body := RegExReplace(body, "^UpdateUI\(", "MainUpdateUI(")
         functions .= body "`r`n"
     }
+    ; StopMapping must also finish an active setup. Include only its real cleanup
+    ; function; the harness supplies an inert dialog, input listener and timeout.
+    controllerSourcePath := A_ScriptDir "\..\MicSetupController.ahk"
+    functions .= ExtractFunction(FileRead(controllerSourcePath, "UTF-8"), "FinishMicSetup") "`r`n"
     ; The worker contains only this fixed allowlist. The real EnableMapping, NativeOutput,
     ; DriverOperation, driver install helpers and Main's top-level code are absent.
     ; These modules contain only declarative definitions, with no startup code.
@@ -43,7 +47,8 @@ try {
         "`r`nExtracted functions: " names.Length "`r`nShortcutConfig: " shortcutSourcePath
         "`r`nShortcutConfig modified: " FileGetTime(shortcutSourcePath, "M")
         "`r`nLocalization: " localizationSourcePath
-        "`r`nLocalization modified: " FileGetTime(localizationSourcePath, "M") "`r`n")
+        "`r`nLocalization modified: " FileGetTime(localizationSourcePath, "M")
+        "`r`nSetup cleanup: FinishMicSetup from " controllerSourcePath "`r`n")
     code := RunWait('"' A_AhkPath '" /ErrorStdOut=UTF-8 "' workerPath '"', testDir, "Hide")
     ExitApp(code)
 } catch as err {

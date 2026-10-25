@@ -13,8 +13,11 @@ try {
         ["Capability and usage buffers", TestBuffers],
         ["Raw registration structure and removal flags", TestRegistrationBuffers],
         ["Learning fallback and keyboard-only rejection", TestLearning],
+        ["Registered learning priority and observation window", TestRegisteredLearning],
+        ["Registered runtime and retryable cleanup", TestRegisteredRuntime],
         ["Keyboard press edges and suppression", TestKeyboardRuntime],
         ["HID device filtering and report aggregation", TestHidRuntime],
+        ["HID guard is required and stops before input", TestGuardLifecycle],
         ["HID preflight and removal before first report", TestHidPreflight],
         ["Stop cancels queued work", TestStop],
         ["Callback failure stops before fault notification", TestCallbackFailure]
@@ -38,11 +41,17 @@ KeyProfile(device := "") {
     return {source: "key", device: device, usagePage: 12, usage: 1}
 }
 
+RegisteredProfile(device := "") {
+    return {source: "registered", device: device, usagePage: 12, usage: 1}
+}
+
 HidProfile(device := "test-hid-a") {
     return {source: "hid", device: device, usagePage: 12, usage: 1}
 }
 
 TestProfiles() {
+    profile := MicButtonInput.ChooseLearnProfile(true, "test-hid-a", true)
+    Check(profile.source = "registered" && profile.device = "", "Registered input takes priority over hook and HID")
     profile := MicButtonInput.ChooseLearnProfile(true, "test-hid-a")
     Check(profile.source = "key" && profile.device = "", "Hook takes priority over HID learning")
     Check(profile.usagePage = 12 && profile.usage = 1, "Learned key profile uses expected usage")
@@ -51,6 +60,8 @@ TestProfiles() {
     Check(!MicButtonInput.ChooseLearnProfile(false, ""), "No observation is not a learned profile")
     profile := MicButtonInput.NormalizeProfile(KeyProfile("unused-device"))
     Check(profile.source = "key" && profile.device = "", "Normalize clears key device")
+    profile := MicButtonInput.NormalizeProfile(RegisteredProfile("unused-device"))
+    Check(profile.source = "registered" && profile.device = "", "Normalize clears registered device")
     profile := MicButtonInput.NormalizeProfile(HidProfile())
     Check(profile.source = "hid" && profile.device = "test-hid-a", "Normalize preserves valid HID device")
     for invalid in [
@@ -126,10 +137,13 @@ TestLearning() {
     input.Learn(ObjBindMethod(sink, "Detected"))
     Check(input.testHooks && input.testPassThrough, "Learning hooks pass through Volume Up")
     Check(input.testRaw && input.testKeyboard, "Learning includes raw keyboard observation")
+    Check(input.testRegistered && input.registeredMonitored, "Learning also registers the native hotkey")
+    Check(!input.testGuard && !input.testGuardOwned, "Learning never enables the shell guard")
     input.FeedKeyboard(0xAE, true)
+    Check(!input.learnPending && !input.rawKeyHeld, "Other raw keys do not alter learning state")
     input.FeedKeyboard(0xAF, true)
     input.FeedKeyboard(0xAF, false)
-    input._FinishLearn()
+    input.FinishLearning()
     Check(sink.profiles.Length = 0, "Raw keyboard alone cannot report learning success")
     input.Close()
 
@@ -137,7 +151,7 @@ TestLearning() {
     input.Learn(ObjBindMethod(sink, "Detected"))
     input.FeedHid("test-hid-a", 1, true)
     input.FeedHid("test-hid-a", 1, false)
-    input._FinishLearn()
+    input.FinishLearning()
     Check(sink.profiles.Length = 1 && sink.profiles[1].source = "hid"
         && sink.profiles[1].device = "test-hid-a", "Learn a HID-only Volume Up source")
     Check(sink.detectedStopped, "Stop registrations before reporting learned profile")
@@ -148,9 +162,98 @@ TestLearning() {
     input.FeedHid("test-hid-a", 1, true)
     input.FeedHook(true)
     input.FeedHook(false)
-    input._FinishLearn()
+    input.FinishLearning()
     Check(sink.profiles.Length = 1 && sink.profiles[1].source = "key", "Hook wins when both paths observe the press")
     Check(sink.detectedStopped, "Hook learning stops before callback")
+    input.Close()
+}
+
+TestRegisteredLearning() {
+    input := FakeButtonInput(), sink := InputRecorder(input)
+    input.Learn(ObjBindMethod(sink, "Detected"))
+    Check(!input.learnPending && !input.sawRegistered, "Successful registration alone does not learn a key")
+    input.FeedHid("test-hid-a", 1, true)
+    input.testNow += 200
+    input._FinishLearn()
+    Check(sink.profiles.Length = 0 && input.mode = "learn", "HID cannot finish at the former 200 ms deadline")
+    Check(input.testTimers[input.learnTimer] = -800, "Early completion waits for the remaining observation interval")
+    input.FeedHook(true)
+    input._RegisteredInput(MicButtonInput.HotkeyId + 1, 0xAF << 16, 0x312, A_ScriptHwnd)
+    input._RegisteredInput(MicButtonInput.HotkeyId, 0xAE << 16, 0x312, A_ScriptHwnd)
+    input._RegisteredInput(MicButtonInput.HotkeyId, 0xAF << 16, 0x312, 0)
+    Check(!input.sawRegistered, "Unrelated native messages do not count as registered evidence")
+    input.testNow += 500
+    input._RegisteredInput(MicButtonInput.HotkeyId, 0xAF << 16, 0x312, A_ScriptHwnd)
+    Check(input.sawRegistered && sink.profiles.Length = 0, "Actual WM_HOTKEY is recorded without calling the client")
+    input.testNow += 299
+    input._FinishLearn()
+    Check(sink.profiles.Length = 0, "Full 1000 ms must elapse from the first valid down")
+    input.testNow++
+    input._FinishLearn()
+    Check(sink.profiles.Length = 1 && sink.profiles[1].source = "registered", "A later registered signal wins the same observation")
+    Check(sink.detectedStopped, "Native hotkey is unregistered before delivering learned profile")
+    input.Close()
+
+    input := FakeButtonInput(), sink := InputRecorder(input)
+    input.testRegisterAvailable := false
+    input.Learn(ObjBindMethod(sink, "Detected"))
+    Check(input.RegistrationError = 1409 && !input.hotkeyRegistered && !input.registeredMonitored,
+        "Registration conflict is recorded without a leftover message monitor")
+    input.FeedRegistered()
+    Check(!input.sawRegistered && !input.learnPending, "A failed registration cannot fabricate a registered source")
+    input.FeedHook(true)
+    input.FinishLearning()
+    Check(sink.profiles.Length = 1 && sink.profiles[1].source = "key", "A registration conflict still permits a proven hook")
+    input.Close()
+
+    input := FakeButtonInput(), sink := InputRecorder(input)
+    input.testRegisterAvailable := false
+    input.Learn(ObjBindMethod(sink, "Detected"))
+    input.FeedHid("test-hid-a", 1, true)
+    input.FinishLearning()
+    Check(sink.profiles.Length = 1 && sink.profiles[1].source = "hid", "A registration conflict still permits proven HID input")
+    input.Close()
+}
+
+TestRegisteredRuntime() {
+    input := FakeButtonInput(), sink := InputRecorder(input)
+    input.Start(RegisteredProfile(), ObjBindMethod(sink, "Pressed"))
+    Check(input.testRegistered && !input.testHooks && !input.testRaw && !input.testGuard,
+        "Registered runtime uses native registration only, independent of sticky AHK hook flags")
+    input._RegisteredInput(MicButtonInput.HotkeyId, 0xAF << 16, 0x312, A_ScriptHwnd)
+    input._RegisteredInput(MicButtonInput.HotkeyId, 0xAF << 16, 0x312, A_ScriptHwnd)
+    Check(sink.presses = 0 && input.pressPending, "Registered callbacks queue work rather than invoking client input")
+    input._DeliverPress()
+    Check(sink.presses = 1, "Queued notifications coalesce until delivery")
+    input.FeedHook(true)
+    input.FeedHid("test-hid-a", 1, true)
+    input._DeliverPress()
+    Check(sink.presses = 1, "Other routes cannot deliver registered runtime presses")
+    input.FeedRegistered()
+    queued := input.PendingCallbacks()
+    input.testUnregisterFailure := true
+    failed := false
+    try input.Stop()
+    catch
+        failed := true
+    Check(failed && input.hotkeyRegistered && input.registeredMonitored && MicButtonInput.Active = input,
+        "Unregister failure preserves ownership and monitor for a cleanup retry")
+    for callback in queued
+        callback.Call()
+    input._RegisteredInput(MicButtonInput.HotkeyId, 0xAF << 16, 0x312, A_ScriptHwnd)
+    Check(sink.presses = 1 && !input.pressPending, "Stopped or stale WM_HOTKEY cannot send after failed cleanup")
+    input.testUnregisterFailure := false
+    input.Stop()
+    Check(input.Stopped() && !IsObject(MicButtonInput.Active), "Retry releases native registration and ownership")
+    input.Close()
+
+    input := FakeButtonInput(), sink := InputRecorder(input)
+    input.testRegisterAvailable := false
+    failed := false
+    try input.Start(RegisteredProfile(), ObjBindMethod(sink, "Pressed"))
+    catch
+        failed := true
+    Check(failed && input.RegistrationError = 1409 && input.Stopped(), "Runtime registration failure throws and cleans up")
     input.Close()
 }
 
@@ -178,6 +281,7 @@ TestHidRuntime() {
     input := FakeButtonInput(), sink := InputRecorder(input)
     input.Start(HidProfile(), ObjBindMethod(sink, "Pressed"))
     Check(input.testRaw && !input.testKeyboard, "HID runtime registers only consumer raw input")
+    Check(input.testGuard && input.testGuardOwned, "HID runtime requires active volume protection")
     input.FeedHid("test-hid-b", 1, true)
     input._DeliverPress()
     Check(sink.presses = 0, "Unrelated HID device is ignored")
@@ -197,6 +301,61 @@ TestHidRuntime() {
     input.FeedHid("test-hid-a", 2, true)
     input._DeliverPress()
     Check(sink.presses = 2, "All report IDs released before a new HID press")
+    input.Close()
+}
+
+TestGuardLifecycle() {
+    input := FakeButtonInput(), sink := InputRecorder(input)
+    input.Start(HidProfile(), ObjBindMethod(sink, "Pressed"))
+    Check(InStr(input.OrderText(), "preflight,guard:on,raw:on"), "HID preflight precedes guard start and Raw Input")
+    input.testOrder := []
+    input.Stop()
+    Check(input.testOrder[1] = "guard:off" && input.Stopped(), "Guard disarms before any input cleanup")
+    input.Close()
+
+    input := FakeButtonInput(), sink := InputRecorder(input)
+    input.testFailGuardStart := true
+    failed := false
+    try input.Start(HidProfile(), ObjBindMethod(sink, "Pressed"))
+    catch
+        failed := true
+    Check(failed && !InStr(input.OrderText(), "raw:on") && input.Stopped(),
+        "Guard startup failure prevents Raw Input and rolls back a partial guard")
+    input.Close()
+
+    input := FakeButtonInput(), sink := InputRecorder(input)
+    input.testFailRawStart := true
+    failed := false
+    try input.Start(HidProfile(), ObjBindMethod(sink, "Pressed"))
+    catch
+        failed := true
+    Check(failed && input.Stopped(), "Raw Input startup failure also rolls back the active guard")
+    input.Close()
+
+    input := FakeButtonInput(), sink := InputRecorder(input)
+    input.Start(HidProfile(), ObjBindMethod(sink, "Pressed"))
+    input.testFailGuardStop := true
+    input.testOrder := []
+    failed := false
+    try input.Stop()
+    catch
+        failed := true
+    Check(failed && !input.testGuard && input.testGuardOwned && !input.testRaw && !input.testHooks,
+        "Guard cleanup failure is disarmed, retains retry ownership, and does not skip other cleanup")
+    Check(MicButtonInput.Active = input, "Failed guard cleanup cannot be replaced by a second listener")
+    input.testFailGuardStop := false
+    input.Stop()
+    Check(input.Stopped() && !IsObject(MicButtonInput.Active), "Guard cleanup can be retried")
+    input.Close()
+
+    input := FakeButtonInput(), sink := InputRecorder(input)
+    input.Start(HidProfile(), ObjBindMethod(sink, "Pressed"), ObjBindMethod(sink, "Faulted"))
+    input.guardFault.Call(N("模拟心跳故障。", "Simulated heartbeat fault."))
+    input.FeedHid("test-hid-a", 1, true)
+    input._DeliverPress()
+    input._DeliverFault()
+    Check(sink.presses = 0 && sink.faults = 1 && sink.faultStopped,
+        "Guard faults stop input before notifying the client")
     input.Close()
 }
 
@@ -307,17 +466,58 @@ class FakeButtonInput extends MicButtonInput {
         this.testKeyboard := false
         this.testTimers := Map()
         this.testDevices := Map(1, {name: "test-hid-a", supportsVolume: true})
+        this.testNow := 1000
+        this.testRegistered := false
+        this.testRegisteredMonitor := false
+        this.testRegisterAvailable := true
+        this.testUnregisterFailure := false
+        this.testGuard := false
+        this.testGuardOwned := false
+        this.testFailGuardStart := false
+        this.testFailGuardStop := false
+        this.testFailRawStart := false
+        this.testOrder := []
         super.__New()
     }
     _SetHooks(enabled, passThrough := false) {
+        this.testOrder.Push(enabled ? "hook:on" : "hook:off")
         this.testHooks := enabled
         this.testPassThrough := passThrough
     }
     _SetRaw(enabled, keyboard := false) {
+        this.testOrder.Push(enabled ? "raw:on" : "raw:off")
         this.testRaw := enabled
         this.testKeyboard := enabled && keyboard
+        if enabled && this.testFailRawStart
+            throw Error("Synthetic Raw Input start failure")
+    }
+    _NativeRegistered(enabled) {
+        this.testOrder.Push(enabled ? "register:on" : "register:off")
+        if enabled && !this.testRegisterAvailable
+            return {ok: false, code: 1409}
+        if !enabled && this.testUnregisterFailure
+            return {ok: false, code: 5}
+        this.testRegistered := enabled
+        return {ok: true, code: 0}
+    }
+    _MonitorRegistered(enabled) {
+        this.testRegisteredMonitor := enabled
+    }
+    _SetGuard(enabled) {
+        this.testOrder.Push(enabled ? "guard:on" : "guard:off")
+        this.testGuard := enabled
+        if enabled {
+            this.testGuardOwned := true
+            if this.testFailGuardStart
+                throw Error("Synthetic guard start failure")
+        } else {
+            if this.testGuardOwned && this.testFailGuardStop
+                throw Error("Synthetic guard stop failure")
+            this.testGuardOwned := false
+        }
     }
     _HidHandles() {
+        this.testOrder.Push("preflight")
         handles := []
         for handle in this.testDevices
             handles.Push(handle)
@@ -338,6 +538,17 @@ class FakeButtonInput extends MicButtonInput {
         } else
             this.testTimers[callback] := delay
     }
+    _Now() => this.testNow
+    FinishLearning() {
+        this.testNow += MicButtonInput.LearnMilliseconds
+        this._FinishLearn()
+    }
+    OrderText() {
+        result := ""
+        for item in this.testOrder
+            result .= (result = "" ? "" : ",") item
+        return result
+    }
     PendingCallbacks() {
         callbacks := []
         for callback in this.testTimers
@@ -345,7 +556,8 @@ class FakeButtonInput extends MicButtonInput {
         return callbacks
     }
     Stopped() {
-        return !this.testHooks && !this.testRaw
+        return !this.testHooks && !this.testRaw && !this.testRegistered && !this.testRegisteredMonitor
+            && !this.testGuard && !this.testGuardOwned
     }
 }
 

@@ -71,6 +71,52 @@ try {
     Check(IniRead(ConfigPath, "Mapping", "EnableOnLaunch") = "0", "stop persists disabled state")
     Pass("StopMapping prevents further sends and persists disabled state")
 
+    ResetState()
+    S.button := FakeStopButton(false)
+    S.hotkey := true ; In-memory listener/guard only.
+    StopMapping(true)
+    Check(S.button.calls = 1 && !S.button.guardActive && !S.enabled && !S.hotkey,
+        "Normal pause stops the listener and its volume guard")
+    Check(S.native.events.Length = 0, "Pausing the guard sends no shortcut")
+    Pass("normal pause disarms the button-owned volume guard")
+
+    for stopFailure in [false, true] {
+        ResetState()
+        S.enabled := false ; The wizard owns input even while the main mapping is off.
+        S.hotkey := false
+        S.button := FakeStopButton(stopFailure)
+        S.settingUp := true
+        dialog := FakeSetupDialog()
+        setup := {priorEnabled: true, dialog: dialog}
+        S.setup := setup
+        S.held.keys := [{device: 2, code: 56, stateUp: 3, name: "RAlt"}]
+        StopMapping(true)
+        Check(!S.settingUp && S.setup = 0 && dialog.closed,
+            "Explicit pause closes the actual setup cleanup path")
+        Check(!setup.priorEnabled && !S.resume && !S.enabled && EnableRequests = 0,
+            "Explicit pause overrides the wizard's previously enabled state")
+        Check(S.button.calls >= 1 && !S.button.guardActive && S.held.keys.Length = 0 && !A_IsCritical,
+            "Wizard pause disarms guard and releases keys even after a Stop failure")
+        Check(IniRead(ConfigPath, "Mapping", "EnableOnLaunch") = "0",
+            "Wizard pause remains disabled after restart")
+        CheckEvents(["56:3"], "wizard pause release")
+        if stopFailure
+            Check(InStr(Text(S.notice), "监听未完全停止"), "Wizard pause preserves cleanup failure notice")
+    }
+    Pass("tray pause during setup closes the wizard, stops its guard and forbids resume, including Stop failures")
+
+    ResetState([2])
+    S.button := FakeStopButton(false)
+    S.hotkey := true
+    SendShortcut("send_fault_stops_guard")
+    if !WasPhysicallyBlocked("send fault stops guard") {
+        Check(S.button.calls = 1 && !S.button.guardActive && !S.hotkey && !S.enabled,
+            "A shortcut failure stops listener and volume guard")
+        Check(!S.resume && S.held.keys.Length = 0,
+            "A shortcut failure still releases keys and prevents automatic resume")
+        Pass("send fault disarms the button-owned volume guard and remains paused")
+    }
+
     for guard in ["busy", "maintenance", "editing", "missing_device"] {
         ResetState()
         if guard = "missing_device"
@@ -100,6 +146,7 @@ try {
         "Stop exception cannot prevent pause, release or Critical-Off")
     Check(S.button.calls = 1 && IniRead(ConfigPath, "Mapping", "EnableOnLaunch") = "0",
         "Stop exception still persists paused state")
+    Check(!S.button.guardActive, "Stop exception does not rearm the volume guard")
     Check(InStr(Text(S.notice), "按钮监听未完全停止"), "Stop exception remains visible")
     SendShortcut("must_not_send_after_stop_exception")
     Check(S.native.events.Length = 1, "Failed listener stop never permits another shortcut")
@@ -115,6 +162,7 @@ try {
             "Send fault and listener stop exception still complete cleanup")
         Check(S.button.calls = 1 && IniRead(ConfigPath, "Mapping", "EnableOnLaunch") = "0",
             "Fault remains persistently paused after stop exception")
+        Check(!S.button.guardActive, "Sender fault never rearms a guard after failed unhook")
         Pass("sender fault plus listener Stop exception preserves cleanup and paused state")
     }
 
@@ -156,10 +204,17 @@ try {
 
     ResetState()
     S.profile := {source: "key", device: "", usagePage: 12, usage: 1,
-        outputHid: "MOCK_ONLY", outputId: 2, topology: ProfileTopology(S.devices), shortcut: "RAlt+Space"}
+        outputHid: "MOCK_ONLY", outputId: 2, topology: ProfileTopology(S.devices), shortcut: "RAlt+Space",
+        volumeVerified: true}
     SaveMicProfile(ConfigPath, S.profile, S.machine)
     LoadMainProfileForTest()
     Check(IsObject(S.profile), "startup accepts matching verified shortcut")
+    IniWrite(1, ConfigPath, "Button", "Version")
+    LoadMainProfileForTest()
+    Check(!IsObject(S.profile), "actual startup refuses old voice-only profile")
+    IniWrite(2, ConfigPath, "Button", "Version")
+    LoadMainProfileForTest()
+    Check(IsObject(S.profile), "startup accepts current profile after explicit joint verification")
     S.binding := ParseShortcut("LCtrl+Space")
     LoadMainProfileForTest()
     Check(!IsObject(S.profile), "actual startup rejects profile with different shortcut")
@@ -343,6 +398,13 @@ class FakeWindow {
     }
 }
 
+class FakeSetupDialog {
+    closed := false
+    Close() {
+        this.closed := true
+    }
+}
+
 EnableMapping(*) {
     ; The real hook-registering Main function is deliberately not included.
     global EnableRequests
@@ -371,10 +433,15 @@ class MockNative {
 }
 
 class FakeStopButton {
-    calls := 0
+    calls := 0, guardActive := true
+    __New(failStop := true) {
+        this.failStop := failStop
+    }
     Stop() {
         this.calls++
-        throw Error("Requested mock listener stop failure")
+        this.guardActive := false
+        if this.failStop
+            throw Error("Requested mock listener stop failure")
     }
 }
 
@@ -416,4 +483,8 @@ ModernRedraw(*) {
 MicSetupActive() {
     global S
     return S.settingUp
+}
+
+MicLearningTimeout(*) {
+    ; Real FinishMicSetup only cancels this never-started test callback.
 }

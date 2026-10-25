@@ -4,12 +4,12 @@
 ; only Close destroys the dialog. The Edit's contents are never read or saved.
 #Include Localization.ahk
 
-ShowMicSetup(owner, onCancel, onRetry, onYes, onNo) {
+ShowMicSetup(owner, onCancel, onRetry, onYes, onNo, onVolumeIssue := 0) {
     if IsObject(MicSetupStore.Active) && !MicSetupStore.Active.closed {
         MicSetupStore.Active.window.Show()
         return MicSetupStore.Active
     }
-    return MicSetupDialog(owner, onCancel, onRetry, onYes, onNo)
+    return MicSetupDialog(owner, onCancel, onRetry, onYes, onNo, true, onVolumeIssue)
 }
 
 class MicSetupStore {
@@ -17,12 +17,13 @@ class MicSetupStore {
 }
 
 class MicSetupDialog {
-    __New(owner, onCancel, onRetry, onYes, onNo, showWindow := true) {
+    __New(owner, onCancel, onRetry, onYes, onNo, showWindow := true, onVolumeIssue := 0) {
         this.owner := owner
         this.onCancel := onCancel
         this.onRetry := onRetry
         this.onYes := onYes
         this.onNo := onNo
+        this.onVolumeIssue := IsObject(onVolumeIssue) ? onVolumeIssue : onCancel
         this.window := 0
         this.closed := false
         this.ownerDisabled := false
@@ -79,18 +80,21 @@ class MicSetupDialog {
         halfWidth := (width - 12) // 2
         g.SetFont("s10 bold cFFFFFF")
         this.yesButton := ModernButton(g, "x32 y" actionY " w" halfWidth " h44",
-            this.Say("已启动，完成设置", "Yes, finish setup"), "primary")
+            this.Say("两项正常，完成设置", "Both work, finish setup"), "primary")
         this.yesButton.OnEvent("Click", ObjBindMethod(this, "ChooseYes"))
         this.noButton := ModernButton(g, "x" (44 + halfWidth) " y" actionY " w" halfWidth " h44",
-            this.Say("没有启动，换一种方式", "No, try another way"), "secondary")
+            this.Say("豆包未启动，换一种方式", "Voice failed, try another"), "secondary")
         this.noButton.OnEvent("Click", ObjBindMethod(this, "ChooseNo"))
         this.retryButton := ModernButton(g, "x32 y" actionY " w" width " h44",
             this.Say("重试", "Try again"), "primary")
         this.retryButton.OnEvent("Click", ObjBindMethod(this, "Retry"))
         g.SetFont("s10 norm c71827B")
-        this.cancelButton := ModernButton(g, "x" ((this.dialogWidth - 112) // 2)
+        this.cancelButton := ModernButton(g, "x32"
             " y" (438 + lowerOffset) " w112 h30", this.Say("取消", "Cancel"), "ghost")
         this.cancelButton.OnEvent("Click", ObjBindMethod(this, "Cancel"))
+        this.volumeIssueButton := ModernButton(g, "x" (this.dialogWidth - 292)
+            " y" (438 + lowerOffset) " w260 h30", this.Say("音量仍在变化", "Volume still changes"), "ghost")
+        this.volumeIssueButton.OnEvent("Click", ObjBindMethod(this, "VolumeIssue"))
         g.OnEvent("Close", ObjBindMethod(this, "Cancel"))
         g.OnEvent("Escape", ObjBindMethod(this, "Cancel"))
     }
@@ -105,7 +109,7 @@ class MicSetupDialog {
         this.canRetry := false
         this.stepLabel.Text := this.Say("首次设置 · 1 / 3", "SETUP · 1 / 3")
         this.heading.Text := this.Say("识别 Mic Air 按钮", "Find your Mic Air button")
-        this.description.Text := this.Say("按一下 Mic Air 按钮。", "Press the Mic Air button once.")
+        this.description.Text := this.Say("松开键盘按键，再按一下 Mic Air 按钮。`n识别这一步可能调整一次音量。", "Release keyboard keys, then press Mic Air once.`nThis detection step may change volume once.")
         this.status.Text := this.Say("● 正在检测按钮…", "● Listening for your button…")
         this.Refresh()
     }
@@ -135,9 +139,9 @@ class MicSetupDialog {
         this.total := total
         this.canRetry := false
         this.stepLabel.Text := this.Say("首次设置 · 3 / 3", "SETUP · 3 / 3")
-        this.heading.Text := this.Say("豆包语音启动了吗？", "Did Doubao voice input start?")
-        this.description.Text := this.Say("启动成功后，点击“已启动”即可完成设置。",
-            "If it started, choose Yes to finish setup.")
+        this.heading.Text := this.Say("语音和音量都正常吗？", "Voice works, volume unchanged?")
+        this.description.Text := this.Say("请确认豆包语音已启动，而且系统音量不变、音量条没有弹出。两项都正常再完成设置。",
+            "Confirm that Doubao started, volume stayed unchanged and no volume overlay appeared. Finish only when both work.")
         this.status.Text := this.Say("方式 {1} / {2}", "Option {1} of {2}", attempt, total)
         ; Keep the same Edit and leave focus alone; Doubao may own a popup now.
         this.Refresh()
@@ -175,17 +179,17 @@ class MicSetupDialog {
         this.input.Enabled := showInput
         this.yesButton.Visible := this.stage = "waiting"
         this.noButton.Visible := this.stage = "waiting"
+        this.volumeIssueButton.Visible := this.stage = "waiting"
         this.retryButton.Visible := this.stage = "failure" && this.canRetry
         this.yesButton.Enabled := !this.isBusy && this.stage = "waiting"
         this.noButton.Enabled := !this.isBusy && this.stage = "waiting"
+        this.volumeIssueButton.Enabled := !this.isBusy && this.stage = "waiting"
         this.retryButton.Enabled := !this.isBusy && this.stage = "failure" && this.canRetry
         this.cancelButton.Enabled := !this.isBusy && !this.cancelRequested
-        this.hint.Visible := showInput || this.source = "hid"
-        this.hint.Text := this.source = "hid"
-            ? this.Say("此电脑的音量也可能随按钮改变。", "The button may also change the volume on this computer.")
-            : this.Say("此处的输入不会被 AirKey 保存。", "This input is not saved by AirKey.")
-        this.hint.SetFont(this.source = "hid" ? "c936E34" : "c71827B")
-        for button in [this.yesButton, this.noButton, this.retryButton, this.cancelButton]
+        this.hint.Visible := showInput
+        this.hint.Text := this.Say("音量＋已接管；调音量请用系统滑块。此处输入不会保存。", "Volume Up is remapped; use the system slider to adjust volume. This input is not saved.")
+        this.hint.SetFont("c71827B")
+        for button in [this.yesButton, this.noButton, this.volumeIssueButton, this.retryButton, this.cancelButton]
             ModernRedraw(button)
     }
 
@@ -211,6 +215,11 @@ class MicSetupDialog {
     ChooseNo(*) {
         if this.stage = "waiting"
             this.Invoke(this.onNo)
+    }
+
+    VolumeIssue(*) {
+        if this.stage = "waiting"
+            this.Invoke(this.onVolumeIssue)
     }
 
     Retry(*) {

@@ -15,7 +15,7 @@
 #Include MicSetupController.ahk
 ;@Ahk2Exe-SetName AirKey
 ;@Ahk2Exe-SetDescription AirKey for Insta360 Mic Air and Doubao voice input
-;@Ahk2Exe-SetVersion 1.2.0.0
+;@Ahk2Exe-SetVersion 1.3.0.0
 ;@Ahk2Exe-SetOrigFilename AirKey.exe
 
 global PersonalEdition := false
@@ -129,6 +129,7 @@ ExtractAssets() {
     FileInstall "THIRD_PARTY_NOTICES.md", DataDir "\licenses\THIRD_PARTY_NOTICES.md", 1
     FileInstall "THIRD_PARTY_NOTICES.en.md", DataDir "\licenses\THIRD_PARTY_NOTICES.en.md", 1
     FileInstall "assets\interception.dll", DataDir "\components\interception.dll", 1
+    FileInstall "assets\volume-guard.dll", DataDir "\components\volume-guard.dll", 1
     FileInstall "assets\install-interception.exe", DataDir "\components\install-interception.exe", 1
     FileInstall "assets\AutoHotkey-license.txt", DataDir "\licenses\AutoHotkey-license.txt", 1
     FileInstall "assets\LGPL-3.0.txt", DataDir "\licenses\LGPL-3.0.txt", 1
@@ -141,6 +142,8 @@ ExtractAssets() {
     FileInstall "assets\voice-illustration.png", DataDir "\components\voice-illustration.png", 1
     if SHA256File(DataDir "\components\interception.dll") != "AB88164C11B1B48488772D4C3BFAA4509D5B0AE9DBC5A691DC4F96F0260443C8"
         throw Error(L("按键发送组件校验失败。", "The key output component failed verification."))
+    if SHA256File(DataDir "\components\volume-guard.dll") != "4074165CC363B2351C3D0AB9AF082FECCC373F8C6291C66095887CA65FA19C7D"
+        throw Error(L("音量保护组件校验失败。", "The volume protection component failed verification."))
     if SHA256File(DataDir "\components\install-interception.exe") != "E137863A79DA797F08E7A137280FF2A123809044A888FD75CE9C973198915ABE"
         throw Error(L("驱动安装组件校验失败。", "The driver installer failed verification."))
 }
@@ -412,7 +415,7 @@ InstallOrEnable(*) {
 }
 
 EnableMapping(*) {
-    global S, Driver, ConfigPath
+    global S, Driver, ConfigPath, DataDir
     if S.enabled || S.maintenance || S.pendingReboot || S.editing || S.held.keys.Length || !DriverReady() || MicSetupActive()
         return
     if !IsObject(S.profile) {
@@ -441,7 +444,7 @@ EnableMapping(*) {
     try {
         InstallKeybdHook()
         if !IsObject(S.button)
-            S.button := MicButtonInput()
+            S.button := MicButtonInput(DataDir "\components\volume-guard.dll")
         S.button.Start(S.profile, VolumeTrigger, MicInputFault)
         S.hotkey := true
         S.enabled := true
@@ -452,9 +455,7 @@ EnableMapping(*) {
         S.resume := true
         IniWrite(S.savedHid, ConfigPath, "Mapping", "HardwareId")
         IniWrite(1, ConfigPath, "Mapping", "EnableOnLaunch")
-        S.notice := S.profile.source = "hid"
-            ? N("先点击输入框，再按 Mic Air 按钮。`n此电脑的音量也可能随按钮改变。", "Click a text field, then press the Mic Air button.`nThe button may also change this computer's volume.")
-            : N("先点击输入框，再按 Mic Air 按钮。`n启用时，键盘上的音量＋也会启动豆包。", "Click a text field, then press the Mic Air button.`nWhile enabled, keyboard Volume Up also starts Doubao.")
+        S.notice := N("按 Mic Air 启动豆包语音。`n音量＋已接管，调音量请用系统滑块。", "Press Mic Air to start Doubao voice input.`nVolume Up is remapped; use the system volume slider.")
         Log("mapping_enabled mode=" S.profile.source " keyboard=" S.devices[S.selected].id)
     } catch as err {
         StopMapping(true)
@@ -469,7 +470,12 @@ StopMapping(save := true) {
     inputStopped := true
     S.enabled := false
     try {
-        if S.hotkey {
+        if MicSetupActive() {
+            S.setup.priorEnabled := false
+            if !FinishMicSetup()
+                inputStopped := false
+        }
+        if S.hotkey || (S.HasOwnProp("button") && IsObject(S.button)) {
             try {
                 if S.HasOwnProp("button") && IsObject(S.button)
                     S.button.Stop()
@@ -533,9 +539,7 @@ SendShortcut(source) {
         }
         device := S.devices[S.selected].id
         SendConfiguredShortcut(S.native, device, S.binding, S.held)
-        S.notice := S.HasOwnProp("profile") && IsObject(S.profile) && S.profile.source = "hid"
-            ? N("先点击输入框，再按 Mic Air 按钮。`n此电脑的音量也可能随按钮改变。", "Click a text field, then press the Mic Air button.`nThe button may also change this computer's volume.")
-            : N("先点击输入框，再按 Mic Air 按钮。`n启用时，键盘上的音量＋也会启动豆包。", "Click a text field, then press the Mic Air button.`nWhile enabled, keyboard Volume Up also starts Doubao.")
+        S.notice := N("按 Mic Air 启动豆包语音。`n音量＋已接管，调音量请用系统滑块。", "Press Mic Air to start Doubao voice input.`nVolume Up is remapped; use the system volume slider.")
         Log("sequence_delivered source=" source " keyboard=" device " shortcut=" S.binding.canonical)
     } catch as err {
         S.faulted := true
@@ -704,7 +708,7 @@ Log(message) {
 RunSelfTest() {
     global DataDir
     status := GetDriverStatus()
-    report := "AirKey 1.2.0 self-check`r`nNo hotkeys registered; no keyboard events sent; no driver changes.`r`n"
+    report := "AirKey 1.3.0 self-check`r`nNo hotkeys registered; no keyboard events sent; no driver changes.`r`n"
     report .= "Assets SHA256 verified.`r`nDriver installed=" status.installed " running=" status.running " pending=" status.pending "`r`n"
     if status.running && !status.pending {
         native := NativeOutput(DataDir "\components\interception.dll")

@@ -6,6 +6,10 @@ This project's original application scripts, tests, build scripts and documentat
 
 AirKey is an independent compatibility utility. It is not an official product of Insta360, Doubao, AutoHotkey or Interception, and does not imply sponsorship, authorization or endorsement by those rights holders. Product names identify compatibility. This project grants no trademark rights.
 
+## Project volume guard
+
+`native/volume-guard.c`, `NativeVolumeGuard.ahk` and the resulting `assets/volume-guard.dll` are original project code covered by the root MIT license. The DLL is built with TinyCC 0.9.27 x64, uses only Windows system APIs and links no TinyCC runtime. The compiler is not distributed with the app; the project includes source and rebuild instructions.
+
 ## AutoHotkey
 
 The Windows EXE contains the AutoHotkey **2.0.30** interpreter. Its official source notices specify **GNU GPL version 2 or, at the recipient's option, any later version (GPL-2.0-or-later)**. AutoHotkey and its contributors retain their respective copyrights. The MIT license on this project's original scripts does not replace the interpreter's GPL terms.

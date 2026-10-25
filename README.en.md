@@ -4,7 +4,7 @@
 
 Turn the **Volume Up signal from an Insta360 Mic Air receiver** into a voice-input shortcut for Doubao IME.
 
-Current version: **v1.2.0**. For Intel / AMD **Windows x64**. The standalone EXE does not require a separate AutoHotkey installation for everyday use.
+Current version: **v1.3.0**. For Intel / AMD **Windows x64**. The standalone EXE does not require a separate AutoHotkey installation for everyday use.
 
 Original project code is MIT-licensed. The bundled Interception drivers and installer are subject to the upstream non-commercial-use conditions. Commercial use requires separate upstream authorization; see the [third-party notices](THIRD_PARTY_NOTICES.en.md).
 
@@ -24,7 +24,7 @@ At runtime, AirKey prefers the icon from Doubao IME already installed on the use
 
 - Enable or pause with one button; a green status indicates that mapping is enabled.
 - Sends **Right Alt + Space** by default. You can record another shortcut, distinguishing left and right Alt, Ctrl and Shift.
-- A first-use wizard detects your button and lets you try it. Setup is saved and enabled only after you confirm that Doubao voice input started.
+- A first-use wizard detects your button and lets you try it. Setup is saved and enabled only after you confirm that Doubao voice input started without changing volume.
 - Tries another local connection when needed, without asking you to choose a device number.
 - Saves a separate verified configuration on each computer. The previous enabled state is restored when that connection remains valid.
 - Chinese by default, with an **English / 中文** button at the bottom right of the main window. The language choice is saved; switching keeps the voice button running.
@@ -38,9 +38,9 @@ At runtime, AirKey prefers the icon from Doubao IME already installed on the use
 3. After installation, save your work and **restart Windows manually**, then reopen the app. The button setup wizard opens automatically when the driver is ready.
 4. Press your Mic Air button once so AirKey can detect it.
 5. Click the wizard's input box, then press your Mic Air button again to try starting Doubao voice input.
-6. If it starts, click **Yes, finish setup**. Otherwise, click **No, try another way**, then try the button again in the input box. AirKey tries the available local connections in turn; you do not need to choose a device number.
+6. Confirm that **Doubao starts, volume stays unchanged and no volume overlay appears**, then choose **Both work, finish setup**. Choose **Voice failed, try another** if voice input fails, or **Volume still changes** if volume changes; that result will not be saved.
 
-AirKey saves and enables this computer's configuration only after receiving a real button event, running a trial and getting your confirmation. It does not automatically detect whether Doubao has started recording. AirKey does not save the contents of the trial input box. If the driver is already installed and loaded, skip reinstallation and complete button setup. After cancelling, click **Set Up Voice Button** to start again.
+AirKey saves and enables this computer's configuration only after receiving a real button event, running a trial and getting your confirmation that both voice and volume behave correctly. It does not automatically detect whether Doubao has started recording. AirKey does not save the contents of the trial input box. If the driver is already installed and loaded, skip reinstallation and complete button setup. After cancelling, click **Set Up Voice Button** to start again.
 
 Minimizing hides the window in the system tray while the app keeps running. Click the tray icon to restore it; Windows may place it in the hidden-icons area. Opening the EXE again restores the existing window instead of starting a second instance.
 
@@ -54,7 +54,7 @@ The main window, button setup wizard, tray menu, shortcut recorder and app messa
 
 The English window title is **AirKey — Insta360 Mic Air**; the Chinese title is **AirKey · 语音键 — Insta360 Mic Air**.
 
-To upgrade, quit the old app and replace its EXE with `AirKey.exe`. An installed, working driver does not need to be reinstalled. Upgrading to v1.2.0 requires one round of button setup before mapping is enabled again. Your existing shortcut and language settings continue to use `%LOCALAPPDATA%\MicAirDoubao`; the folder name is retained for compatibility. The repository remains at `yuhcaesar/mic-air-voice-button`.
+To upgrade, quit the old app and standalone volume probe, then replace its EXE with `AirKey.exe`. An installed, working driver does not need to be reinstalled. Upgrading to v1.3.0 requires confirming both voice activation and unchanged volume. Older voice-only verification is not accepted as volume verification. Your existing shortcut and language settings continue to use `%LOCALAPPDATA%\MicAirDoubao`; the folder name is retained for compatibility. The repository remains at `yuhcaesar/mic-air-voice-button`.
 
 Each computer saves its own verified configuration. Complete the wizard again on a new computer, when the previous connection disappears, or when the saved connection can no longer be identified reliably. Copying the EXE or an old settings file does not replace verification on the new computer.
 
@@ -66,11 +66,11 @@ Open **Settings → Edit → Start Recording**, press the shortcut configured in
 
 ### Set up the button again
 
-If the button stops responding or you need to set it up again, open **Settings → Set Up Button Again**. The wizard detects the Mic Air button again and lets you try the available connections. It saves the new result only after you click **Yes, finish setup**. Your chosen shortcut stays the same, and AirKey does not automatically decide whether Doubao started.
+If the button stops responding or you need to set it up again, open **Settings → Set Up Button Again**. The wizard detects the Mic Air button again and lets you try the available connections. It saves the new result only after you click **Both work, finish setup**. Your chosen shortcut stays the same, and AirKey does not automatically decide whether Doubao started.
 
 ### Restore Volume Up / uninstall
 
-- Temporarily stop voice activation: click **Pause Voice Button**. In keyboard-key mode, this also restores normal Volume Up behavior immediately.
+- Temporarily stop voice activation: click **Pause Voice Button**. This also removes the volume guard.
 - Remove the driver: click **Uninstall & Restore**, restart Windows manually after completion, then delete the EXE.
 - Settings, logs and extracted components are stored in `%LOCALAPPDATA%\MicAirDoubao`. After uninstalling the driver and quitting the app, you may delete this app-specific folder.
 
@@ -78,18 +78,19 @@ Do not manually delete driver files from the Windows system directory. Uninstall
 
 ## Limitations
 
-- Setup chooses an available input method automatically. In **keyboard-key mode**, AirKey handles every **Volume Up** event it receives; a keyboard's Volume Up key can also start voice input.
-- In **HID mode**, it listens only to media events from the device identified during setup. The same button press **may also change Windows volume**. The wizard and main window explicitly show this caveat.
+- Setup checks registered hotkeys, keyboard hooks and raw device input. It prefers registered hotkeys only after an actual event, without asking you to choose a mode. Keyboard-key methods also handle other received Volume Up keys, which may start voice input.
+- Raw device input starts the built-in volume guard. It consumes all volume-up commands reaching that channel, not just Mic Air. Use the system slider to adjust volume. Pause, exit or input failure removes the guard; no standalone probe is needed.
+- Some applications handle media keys themselves or use another input path and may bypass the guard. Verify your everyday apps; pause and repeat setup if volume still changes. AirKey does not restore volume after a change. Initial button detection may change volume once; the guard is active for the later trial.
 - Triggers are spaced at least approximately 1.5 seconds apart to avoid repeated activation from one press.
 - AirKey only sends a shortcut. It does not record audio, upload data, log ordinary typing or detect whether Doubao is currently recording.
 - Driver installation and removal need administrator permission and a subsequent restart.
-- The underlying trigger has worked with a Mic Air receiver on one Windows 11 x64 computer; compatibility with every computer is not guaranteed. Setup counts as successful only after a button event is received and you confirm that Doubao voice input started on that computer. Long sleep cycles and repeated hot-plugging have not been comprehensively tested.
+- The underlying trigger has worked with a Mic Air receiver on one Windows 11 x64 computer; compatibility with every computer is not guaranteed. Setup counts as successful only after a button event is received and you confirm that Doubao voice input started without changing volume on that computer. Long sleep cycles and repeated hot-plugging have not been comprehensively tested.
 - Interception v1.0.1 is old. [Kanata's Windows known issues](https://github.com/jtroo/kanata/blob/main/docs/platform-known-issues.adoc) document sleep and device hot-plugging problems with the driver on some systems.
 - Windows on ARM is not supported. The EXE is not code-signed. The setup wizard cannot automatically resolve a driver blocked by Windows. If Windows blocks the driver, stop installation or uninstall it and keep system security protections enabled.
 
 ## Why a driver is needed
 
-In this project's test environment, Mic Air reported Volume Up through its receiver, but ordinary software-generated shortcuts did not start Doubao voice input. AirKey receives Volume Up through a forced keyboard hook, or receives Consumer HID media events from the identified device through Windows Raw Input. Interception then sends the keyboard scan codes.
+In this project's test environment, Mic Air reported Volume Up through its receiver, but ordinary software-generated shortcuts did not start Doubao voice input. AirKey receives the button through registered hotkeys, keyboard hooks or Windows Raw Input, then uses Interception to send scan codes. Raw device input also starts the project WH_SHELL volume-command guard, which needs no new driver.
 
 The default Right Alt + Space uses the sequence that worked in testing. The app does not use Interception to intercept raw keyboard input and does not modify the Doubao application.
 
@@ -104,6 +105,15 @@ Install [AutoHotkey v2 x64](https://www.autohotkey.com/) and [Ahk2Exe](https://g
 The output is `dist\AirKey.exe`. Use `-Runtime` and `-Compiler` to specify tool paths, or set the `AHK_RUNTIME` / `AHK_COMPILER` environment variables. Building does not install a driver or run the resulting EXE.
 
 This release uses AutoHotkey **2.0.30 x64** and Ahk2Exe **1.1.37.02a2**. See [THIRD_PARTY_NOTICES.en.md](THIRD_PARTY_NOTICES.en.md) for dependency versions, licenses and sources.
+
+The repository includes `assets/volume-guard.dll`, built from the MIT-licensed `native/volume-guard.c`. To rebuild it, install Windows x64 [TinyCC 0.9.27](https://download.savannah.gnu.org/releases/tinycc/) and run:
+
+```powershell
+.\native\build-volume-guard.ps1 -NativeCompiler 'D:\Tools\tcc\tcc.exe'
+.\native\tests\run-tests.ps1 -NativeCompiler 'D:\Tools\tcc\tcc.exe'
+```
+
+Update its SHA256 in `Main.ahk`, then run `build.ps1` again. The DLL only calls Windows system APIs and links no compiler runtime. Building and isolated tests do not activate the guard or send real key input.
 
 ### Third-party source and rebuilding
 
@@ -121,7 +131,7 @@ The EXE extracts and verifies its embedded components, so directly replacing the
 
 Tests cover syntax, shortcut parsing, send order, key release after failures, settings persistence and stopping behavior, plus localization and hidden wizard windows. Sends are replaced with in-memory mocks. Tests do not install a driver, send real shortcuts or alter everyday settings.
 
-The physical Mic Air button, Doubao voice activation and driver installation/removal need manual verification on a compatible Windows computer. The new v1.2.0 wizard and HID input path have passed automated checks but still need physical verification on the target computer. Earlier success with the underlying trigger does not establish that the new flow works on other computers.
+The physical Mic Air button, Doubao activation and driver installation/removal require manual verification. The user confirmed that the standalone volume probe preserved Doubao activation without changing volume on another computer. The integrated app still requires confirmation on the target computer; this does not establish compatibility with every computer or application.
 
 ## Project layout
 
@@ -130,7 +140,8 @@ The physical Mic Air button, Doubao voice activation and driver installation/rem
 | `Main.ahk` | Main UI, configuration, Volume Up mapping and lifecycle |
 | `SetupWizard.ahk` | First-use button setup wizard and trial input box |
 | `MicSetupController.ahk` | Button detection, connection trials and user confirmation |
-| `ButtonInput.ahk` | Keyboard-hook and device-specific Consumer HID button input |
+| `ButtonInput.ahk` | Registered hotkeys, keyboard hooks and device-specific Consumer HID input |
+| `NativeVolumeGuard.ahk` / `native/` | Volume guard, native source and rebuild script |
 | `MachineProfile.ahk` | Local verified configuration and connection matching |
 | `Localization.ahk` | Bilingual text, notices and errors |
 | `NativeOutput.ahk` | Interception output and connection selection |

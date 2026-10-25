@@ -40,8 +40,9 @@ LoadMicProfile(path, machineKey) {
     if machineKey = ""
         return 0
     try {
-        if IniRead(path, "Button", "Version", "0") != "1"
+        if IniRead(path, "Button", "Version", "0") != "2"
             || IniRead(path, "Button", "Verified", "0") != "1"
+            || IniRead(path, "Button", "VolumeVerified", "0") != "1"
             || IniRead(path, "Button", "Machine", "") != machineKey
             return 0
         profile := {source: IniRead(path, "Button", "Source", ""),
@@ -49,14 +50,15 @@ LoadMicProfile(path, machineKey) {
             outputHid: IniRead(path, "Button", "OutputHardwareId", ""),
             outputId: Integer(IniRead(path, "Button", "OutputId", "0")),
             topology: IniRead(path, "Button", "Topology", ""),
-            shortcut: IniRead(path, "Button", "Shortcut", "")}
+            shortcut: IniRead(path, "Button", "Shortcut", ""), volumeVerified: true}
         return ValidMicProfile(profile) ? profile : 0
     }
     return 0
 }
 
 ValidMicProfile(profile) {
-    try return (profile.source = "key" || (profile.source = "hid" && profile.device != ""))
+    try return (profile.source = "registered" || profile.source = "key" || (profile.source = "hid" && profile.device != ""))
+        && profile.volumeVerified = true
         && profile.usagePage = 12 && profile.usage = 1 && profile.outputHid != ""
         && profile.outputId >= 1 && profile.outputId <= 10 && profile.shortcut != ""
         && RegExMatch(profile.topology, "^[A-F0-9]{64}$")
@@ -71,7 +73,7 @@ SaveMicProfile(path, profile, machineKey) {
         if FileExist(path)
             FileCopy(path, temporary)
         IniWrite(0, temporary, "Button", "Verified")
-        values := Map("Version", 1, "Machine", machineKey, "Source", profile.source,
+        values := Map("Version", 2, "VolumeVerified", 1, "Machine", machineKey, "Source", profile.source,
             "Device", profile.device, "OutputHardwareId", profile.outputHid,
             "OutputId", profile.outputId, "Topology", profile.topology, "Shortcut", profile.shortcut)
         for key, value in values

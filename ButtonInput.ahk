@@ -1,11 +1,13 @@
 ; AHK v2 x64. No input registration, device enumeration or I/O on include/new.
-; Learn(onDetected): observe one Volume Up press, correlate signals for 200 ms,
-; then Stop before onDetected(profile). Hook wins over consumer HID. A raw
+; Learn(onDetected): observe one Volume Up press for at least 1000 ms,
+; then Stop before onDetected(profile). Registered hotkey > hook > consumer HID. A raw
 ; keyboard event alone does not prove that the suppressing hook works.
-; Start(profile,onPress,onFault:=0): key uses $Volume_Up; hid listens only to
-; the selected device and CANNOT suppress its normal Windows volume change.
-; Stop()/Close(): cancel timers, disable owned hotkeys and unregister Raw Input.
-; Profile: {source:"key"|"hid",device:"",usagePage:12,usage:1}. HID device paths
+; __New(guardPath:=""): no I/O; the HID guard is constructed lazily on Start.
+; Start(profile,onPress,onFault:=0): registered uses Win32 RegisterHotKey,
+; key uses *$Volume_Up, and hid requires NativeVolumeGuard before Raw Input.
+; Stop()/Close(): disarm guard, cancel timers and remove all owned registrations.
+; RegistrationError retains the last Win32 registration failure (0 on success).
+; Profile: {source:"registered"|"key"|"hid",device:"",usagePage:12,usage:1}. HID device paths
 ; are local matching data: never log or include them in user-visible errors.
 ;
 ; Raw structures and HID parser contracts:
@@ -14,11 +16,14 @@
 ; https://learn.microsoft.com/windows-hardware/drivers/ddi/hidpi/nf-hidpi-hidp_getusages
 ; Blank WM_INPUT returns let AHK's default window procedure perform cleanup.
 #Include Localization.ahk
+#Include NativeVolumeGuard.ahk
 
 class MicButtonInput {
     static Active := 0
+    static HotkeyId := 0xA17E ; Outside AHK hotkey IDs; inside Win32's application range.
+    static LearnMilliseconds := 1000
 
-    __New() {
+    __New(guardPath := "") {
         if A_PtrSize != 8
             throw LocalError("按钮监听需要 64 位程序。", "Button input requires the 64-bit app.")
         this.mode := ""
@@ -31,7 +36,14 @@ class MicButtonInput {
         this.hookHeld := false
         this.rawKeyHeld := false
         this.learnPending := false
+        this.learnStarted := 0
         this.sawHook := false
+        this.sawRegistered := false
+        this.RegistrationError := 0
+        this.hotkeyRegistered := false
+        this.registeredMonitored := false
+        this.guardPath := guardPath
+        this.guard := 0
         this.learnDevices := Map()
         this.hidStates := Map()
         this.devices := Map()
@@ -48,6 +60,8 @@ class MicButtonInput {
         this.hookUp := ObjBindMethod(this, "_HookUp")
         this.rawCallback := ObjBindMethod(this, "_RawInput")
         this.deviceCallback := ObjBindMethod(this, "_DeviceChange")
+        this.registeredCallback := ObjBindMethod(this, "_RegisteredInput")
+        this.guardFault := ObjBindMethod(this, "_QueueFault")
         this.learnTimer := ObjBindMethod(this, "_FinishLearn")
         this.pressTimer := ObjBindMethod(this, "_DeliverPress")
         this.faultTimer := ObjBindMethod(this, "_DeliverFault")
@@ -59,7 +73,9 @@ class MicButtonInput {
         this.mode := "learn"
         this.onDetected := onDetected
         this.LastError := ""
+        this.RegistrationError := 0
         try {
+            this._SetRegistered(true, false)
             this._SetRaw(true, true)
             this._SetHooks(true, true)
         } catch as err {
@@ -78,10 +94,13 @@ class MicButtonInput {
         this.onFault := onFault
         this.LastError := ""
         try {
-            if this.mode = "key"
+            if this.mode = "registered"
+                this._SetRegistered(true, true)
+            else if this.mode = "key"
                 this._SetHooks(true, false)
             else {
                 this._PrepareHidDevice(profile.device)
+                this._SetGuard(true)
                 this._SetRaw(true, false)
             }
         } catch as err {
@@ -99,7 +118,13 @@ class MicButtonInput {
         for timer in [this.learnTimer, this.pressTimer, this.faultTimer]
             this._Schedule(timer, 0)
         failure := 0
+        try this._SetGuard(false)
+        catch as err
+            failure := err
         try this._SetHooks(false)
+        catch as err
+            failure := err
+        try this._SetRegistered(false)
         catch as err
             failure := err
         try this._SetRaw(false)
@@ -112,6 +137,8 @@ class MicButtonInput {
         this.hookHeld := false
         this.rawKeyHeld := false
         this.sawHook := false
+        this.sawRegistered := false
+        this.learnStarted := 0
         this.learnDevices.Clear()
         this.hidStates.Clear()
         this.devices.Clear()
@@ -132,7 +159,7 @@ class MicButtonInput {
 
     static NormalizeProfile(profile) {
         if !IsObject(profile) || !profile.HasOwnProp("source")
-            || !(profile.source == "key" || profile.source == "hid")
+            || !(profile.source == "registered" || profile.source == "key" || profile.source == "hid")
             || !profile.HasOwnProp("usagePage") || profile.usagePage != 12
             || !profile.HasOwnProp("usage") || profile.usage != 1
             throw LocalError("按钮配置无效，请重新校准。", "Invalid button profile. Calibrate the button again.")
@@ -140,10 +167,12 @@ class MicButtonInput {
         if profile.source = "hid" && (Type(device) != "String" || device = ""
             || StrLen(device) > 32767 || RegExMatch(device, "[\x00\r\n]"))
             throw LocalError("按钮设备配置无效，请重新校准。", "Invalid button device profile. Calibrate the button again.")
-        return {source: profile.source, device: profile.source = "key" ? "" : device, usagePage: 12, usage: 1}
+        return {source: profile.source, device: profile.source = "hid" ? device : "", usagePage: 12, usage: 1}
     }
 
-    static ChooseLearnProfile(sawHook, hidDevice) {
+    static ChooseLearnProfile(sawHook, hidDevice, sawRegistered := false) {
+        if sawRegistered
+            return {source: "registered", device: "", usagePage: 12, usage: 1}
         if sawHook
             return {source: "key", device: "", usagePage: 12, usage: 1}
         if hidDevice != ""
@@ -153,6 +182,24 @@ class MicButtonInput {
 
     _HookDown(*) => this.FeedHook(true)
     _HookUp(*) => this.FeedHook(false)
+
+    _RegisteredInput(wParam, lParam, message, hwnd) {
+        if hwnd != A_ScriptHwnd || message != 0x312 || wParam != MicButtonInput.HotkeyId
+            return
+        if (lParam >> 16 & 0xFFFF) = 0xAF && !(lParam & 0xF)
+            this.FeedRegistered()
+        return 0 ; Only consume our own WM_HOTKEY, including stale queued messages.
+    }
+
+    FeedRegistered() {
+        if !this.hotkeyRegistered || !(this.mode = "learn" || this.mode = "registered") || this.faultPending
+            return
+        if this.mode = "learn" {
+            this.sawRegistered := true
+            this._BeginCorrelation()
+        } else
+            this._QueuePress() ; MOD_NOREPEAT provides native held-key deduplication.
+    }
 
     FeedHook(isDown) {
         if !(this.mode = "learn" || this.mode = "key") || this.faultPending
@@ -207,20 +254,27 @@ class MicButtonInput {
         if this.learnPending
             return
         this.learnPending := true
-        this._Schedule(this.learnTimer, -200)
+        this.learnStarted := this._Now()
+        this._Schedule(this.learnTimer, -MicButtonInput.LearnMilliseconds)
     }
 
     _FinishLearn() {
         if this.mode != "learn" || !this.learnPending
             return
+        remaining := MicButtonInput.LearnMilliseconds - (this._Now() - this.learnStarted)
+        if remaining > 0 {
+            this._Schedule(this.learnTimer, -remaining)
+            return
+        }
         this._Schedule(this.learnTimer, 0)
         this.learnPending := false
         device := ""
         if this.learnDevices.Count = 1
             for name, original in this.learnDevices
                 device := original
-        profile := MicButtonInput.ChooseLearnProfile(this.sawHook, device)
+        profile := MicButtonInput.ChooseLearnProfile(this.sawHook, device, this.sawRegistered)
         this.sawHook := false
+        this.sawRegistered := false
         this.learnDevices.Clear()
         if !IsObject(profile)
             return ; No proven source, or simultaneous ambiguous HID devices.
@@ -239,7 +293,7 @@ class MicButtonInput {
     }
 
     _DeliverPress() {
-        if !this.pressPending || !(this.mode = "key" || this.mode = "hid") || this.faultPending
+        if !this.pressPending || !(this.mode = "registered" || this.mode = "key" || this.mode = "hid") || this.faultPending
             return
         this.pressPending := false
         generation := this.generation
@@ -271,8 +325,71 @@ class MicButtonInput {
             try callback.Call(message)
     }
 
-    ; These three OS seams are overridden by the isolated test subclass.
+    ; OS/clock seams are overridden by the isolated test subclass.
     _Schedule(callback, delay) => SetTimer(callback, delay)
+    _Now() => DllCall("Kernel32\GetTickCount64", "UInt64")
+
+    _SetGuard(enabled) {
+        if !enabled {
+            if IsObject(this.guard) {
+                if !this.guard.Stop() || !this.guard.Close()
+                    throw LocalError("无法完全停止音量保护，请退出程序后重试。", "Volume protection could not fully stop. Exit the app and retry.")
+                this.guard := 0
+            }
+            return
+        }
+        if !IsObject(this.guard) {
+            if this.guardPath = ""
+                throw LocalError("音量保护组件不可用，请重新打开程序。", "Volume protection is unavailable. Reopen the app.")
+            this.guard := NativeVolumeGuard(this.guardPath)
+        }
+        if !this.guard.Start(this.guardFault)
+            throw LocalError("无法启动音量保护，请重新启用。", "Could not start volume protection. Enable the button again.")
+    }
+
+    _SetRegistered(enabled, required := false) {
+        if !enabled {
+            if this.hotkeyRegistered {
+                result := this._NativeRegistered(false)
+                if !result.ok
+                    throw LocalError("无法停止注册音量键（错误 {1}）。", "Could not unregister Volume Up (error {1}).", result.code)
+                this.hotkeyRegistered := false
+            }
+            if this.registeredMonitored {
+                this._MonitorRegistered(false)
+                this.registeredMonitored := false
+            }
+            return true
+        }
+        if this.hotkeyRegistered
+            return true
+        this._MonitorRegistered(true)
+        this.registeredMonitored := true
+        result := this._NativeRegistered(true)
+        this.RegistrationError := result.ok ? 0 : result.code
+        if result.ok {
+            this.hotkeyRegistered := true
+            return true
+        }
+        this._MonitorRegistered(false)
+        this.registeredMonitored := false
+        if required
+            throw LocalError("音量键暂时无法注册（错误 {1}），请关闭其他按键映射工具后重试。",
+                "Volume Up could not be registered (error {1}). Close other key-mapping tools and retry.", result.code)
+        return false ; Learning may still prove a hook or HID source.
+    }
+
+    _NativeRegistered(enabled) {
+        if enabled
+            ok := DllCall("User32\RegisterHotKey", "Ptr", A_ScriptHwnd, "Int", MicButtonInput.HotkeyId,
+                "UInt", 0x4000, "UInt", 0xAF, "Int") ; MOD_NOREPEAT
+        else
+            ok := DllCall("User32\UnregisterHotKey", "Ptr", A_ScriptHwnd, "Int", MicButtonInput.HotkeyId, "Int")
+        code := A_LastError
+        return {ok: !!ok, code: ok ? 0 : code}
+    }
+
+    _MonitorRegistered(enabled) => OnMessage(0x312, this.registeredCallback, enabled ? 1 : 0)
 
     _SetHooks(enabled, passThrough := false) {
         if !enabled {
@@ -290,7 +407,7 @@ class MicButtonInput {
                 throw LocalError("无法停止音量键监听。", "Could not stop the Volume Up hook.")
             return
         }
-        prefix := passThrough ? "~$" : "$"
+        prefix := passThrough ? "~*$" : "*$"
         Hotkey(prefix "Volume_Up", this.hookDown, "On B0 T1")
         this.hookDownName := prefix "Volume_Up"
         Hotkey(prefix "Volume_Up Up", this.hookUp, "On B0 T1")

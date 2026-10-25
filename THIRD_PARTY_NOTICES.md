@@ -6,6 +6,10 @@
 
 本项目是独立的兼容工具，不是 Insta360、豆包、AutoHotkey 或 Interception 的官方产品，不表示这些权利人对本项目的赞助、授权或背书。产品名称用于说明兼容关系；本项目不授予任何商标权。
 
+## 项目音量拦截器
+
+`native/volume-guard.c`、`NativeVolumeGuard.ahk` 和由其构建的 `assets/volume-guard.dll` 是本项目的原创代码，按根目录 MIT 许可提供。DLL 使用 TinyCC 0.9.27 x64 构建，仅依赖 Windows 系统 API，不链接 TinyCC 运行库。编译器不随应用分发；源码和重新构建方法随项目提供。
+
 ## AutoHotkey
 
 Windows EXE 包含 AutoHotkey **2.0.30** 解释器。其官方源文件声明采用 **GNU GPL 第 2 版或由接收者选择的更新版本（GPL-2.0-or-later）**。AutoHotkey 及其贡献者保留各自版权；本项目原创脚本的 MIT 许可不替代解释器的 GPL 条款。

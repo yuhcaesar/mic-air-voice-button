@@ -1,5 +1,25 @@
 # 更新记录
 
+## 1.3.0 — 启动语音，保持音量 / Voice input without changing volume
+
+中文：
+
+- 将已在用户另一台电脑验证有效的音量拦截整合到应用。使用设备媒体信号时必须同时启用拦截；无需单独运行实验工具，也无需新增驱动。
+- 补回首次识别遗漏的系统注册热键方式；同时观察键盘钩子和原始媒体信号，按实际收到的事件自动选择。
+- 向导只有在用户确认“豆包已启动、音量不变、音量条不弹出”后才保存。新增“音量仍在变化”反馈，失败结果不保存。
+- 升级后重新完成一次按钮设置；保留语言、快捷键和已安装的驱动。
+- 暂停、退出、设置取消或接收失败时关闭音量拦截；向导过程中使用托盘停止也会取消设置。拦截器失去应用心跳后自动放行。
+- 音量拦截对所有到达相同系统通道的音量＋生效，不只限于 Mic Air；使用系统滑块调音量。部分应用可能使用其他通道，仍需目标电脑实测确认。
+
+English:
+
+- Integrated the volume guard confirmed by the user on another computer. Raw device input now requires the guard; no standalone probe or additional driver is needed.
+- Restored registered-hotkey detection missing from setup. It observes registered hotkeys, keyboard hooks and raw media input, choosing based on received events.
+- Setup saves only after the user confirms voice starts, volume stays unchanged and no volume overlay appears. **Volume still changes** rejects the trial without saving.
+- Upgrades require one new button setup while preserving language, shortcut and the installed driver.
+- Pausing, exiting, cancelling setup or input failure stops the guard. Tray Stop also cancels an active wizard. The guard passes commands through if the app heartbeat expires.
+- The guard affects all Volume Up commands reaching its system channel, not only Mic Air. Use the system volume slider. Other application paths may bypass it, so verification on the target computer remains necessary.
+
 ## 1.2.0 — 每台电脑的按钮设置 / Per-computer button setup
 
 中文：

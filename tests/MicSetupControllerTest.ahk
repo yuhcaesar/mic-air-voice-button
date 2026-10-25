@@ -21,12 +21,17 @@ try {
     DetectButton()
     ConfirmMicSetup()
     Check(!S.setup.tested && FileRead(ConfigPath) = original, "Detected button without actual trial cannot save")
+    Check(!S.setup.profile.HasOwnProp("volumeVerified") || !S.setup.profile.volumeVerified,
+        "Detection alone never claims volume confirmation")
     S.setup.dialog.focused := false
     S.setup.notBefore := 0
     MicSetupPress()
     Check(S.native.events.Length = 0 && S.setup.dialog.focusRequests = 1
         && !S.setup.tested, "Focus guard only focuses test input")
+    listener := S.button
+    Check(listener.guardActive, "Detected trial starts the fake volume guard")
     CancelMicSetup()
+    Check(!listener.guardActive && !listener.running, "Cancelling an unconfirmed trial stops its guard")
     Pass("learning/detection alone cannot save; unfocused trial cannot send")
 
     ResetCase()
@@ -53,13 +58,38 @@ try {
     DetectButton()
     if Trial("confirmed output") {
         Check(S.setup.stage = "confirming" && S.setup.tested && FileRead(ConfigPath) = original, "Actual trial still requires explicit confirmation")
+        Check(!S.setup.profile.HasOwnProp("volumeVerified") || !S.setup.profile.volumeVerified,
+            "A delivered shortcut does not imply unchanged system volume")
         ConfirmMicSetup()
         saved := LoadMicProfile(ConfigPath, S.machine)
-        Check(IsObject(saved) && saved.outputHid = "ACPI\TEST_A" && saved.shortcut = "RAlt+Space", "Explicit confirmation saves tested output")
-        Check(!S.settingUp && EnableRequests = 1 && S.button.stops >= 2, "Successful completion cleans listener and requests enable")
+        Check(IsObject(saved) && saved.outputHid = "ACPI\TEST_A" && saved.shortcut = "RAlt+Space"
+            && saved.volumeVerified, "Explicit joint confirmation saves tested output and volume result")
+        Check(!S.settingUp && EnableRequests = 1 && S.button.stops >= 2 && !S.button.guardActive,
+            "Successful completion cleans listener/guard before requesting enable")
         Pass("only explicit confirmation after actual mock trial commits profile")
     } else
         CancelMicSetup(false)
+
+    ResetCase(true)
+    original := FileRead(ConfigPath)
+    oldProfile := S.profile
+    BeginMicSetup()
+    DetectButton()
+    MicSetupVolumeIssue()
+    Check(S.setup.stage = "ready" && S.button.guardActive,
+        "Volume-result action cannot run before an actual trial")
+    if Trial("voice works but volume changes") {
+        MicSetupVolumeIssue()
+        Check(S.setup.stage = "failed" && !S.setup.tested && !S.button.running && !S.button.guardActive,
+            "Reported volume change stops the trial listener and guard")
+        ConfirmMicSetup()
+        Check(FileRead(ConfigPath) = original && S.profile = oldProfile && EnableRequests = 0,
+            "A voice-only success cannot overwrite prior verified settings or enable")
+        Check(!S.setup.profile.HasOwnProp("volumeVerified") || !S.setup.profile.volumeVerified,
+            "Failed volume result never becomes joint confirmation")
+        Pass("volume-change result refuses save and enable, preserves prior settings and stops input/guard")
+    }
+    CancelMicSetup(false)
 
     ResetCase()
     original := FileRead(ConfigPath)
@@ -87,7 +117,7 @@ try {
     dialog := S.setup.dialog
     button := S.button
     CancelMicSetup()
-    Check(!S.settingUp && dialog.closed && button.stops = 1, "Cancellation closes dialog/listener")
+    Check(!S.settingUp && dialog.closed && button.stops = 1 && !button.guardActive, "Cancellation closes dialog/listener and disarms guard")
     Check(S.profile = oldProfile && FileRead(ConfigPath) = original && EnableRequests = 1, "Cancellation preserves prior profile and restores enabled request")
     Check(FindProfileOutput(S.devices, S.profile) = 2, "Retained profile resolves correctly after enumeration reordering")
     Pass("cancel preserves old profile/configuration, cleans listener/window and retains resolvable output after reordering")
@@ -102,6 +132,7 @@ try {
     CancelMicSetup()
     Check(!S.settingUp && !S.enabled && dialog.closed && S.held.keys.Length = 0,
         "Listener stop exception still releases keys and closes dialog")
+    Check(!S.button.guardActive, "Stop failure leaves the mock guard disarmed")
     Check(EnableRequests = 0 && S.profile = oldProfile && FileRead(ConfigPath) = original,
         "Failed cancellation cleanup cannot restore enabled mapping or alter profile")
     Check(InStr(Text(S.notice), "监听未完全停止"), "Cancellation preserves cleanup error notice")
@@ -126,7 +157,8 @@ try {
     original := FileRead(ConfigPath)
     BeginMicSetup()
     MicLearningTimeout()
-    Check(S.setup.stage = "failed" && !S.button.learning && FileRead(ConfigPath) = original, "Timeout stops detection without saving")
+    Check(S.setup.stage = "failed" && !S.button.learning && !S.button.guardActive
+        && FileRead(ConfigPath) = original, "Timeout stops detection/guard without saving")
     ConfirmMicSetup()
     Check(FileRead(ConfigPath) = original, "Timed-out setup cannot confirm")
     CancelMicSetup(false)
@@ -156,6 +188,8 @@ try {
     if Trial("persistent release failure", false) {
         Check(S.held.keys.Length > 0 && S.setup.stage = "failed" && !S.setup.dialog.canRetry,
             "Unreleased keys block retry and retain recovery state")
+        Check(!S.button.guardActive && !S.button.running,
+            "Unreleased-key fault stops the listener and guard")
         attempts := S.native.events.Length
         StartMicLearning()
         ConfirmMicSetup()
@@ -239,7 +273,7 @@ ResetCase(prior := false) {
         S.selected := 1
         S.profile := {source: "key", device: "", usagePage: 12, usage: 1,
             outputHid: S.devices[1].hid, outputId: 2,
-            topology: ProfileTopology(S.devices), shortcut: "RAlt+Space"}
+            topology: ProfileTopology(S.devices), shortcut: "RAlt+Space", volumeVerified: true}
         S.savedHid := S.profile.outputHid
         SaveMicProfile(ConfigPath, S.profile, S.machine)
     }
@@ -332,15 +366,21 @@ class MockDialog {
     }
 }
 class MicButtonInput {
-    learning := false, running := false, stops := 0, failStop := false
+    learning := false, running := false, stops := 0, failStop := false, guardActive := false
+    __New(*) {
+        ; Production may supply a DLL path; this fake never opens it.
+    }
     Learn(*) {
         this.learning := true
     }
     Start(*) {
         this.running := true
+        this.guardActive := true
     }
     Stop() {
         this.stops++
+        ; Native guard's contract is disarm-before-unhook, even on failure.
+        this.guardActive := false
         if this.failStop
             throw Error("Requested mock listener stop failure")
         this.learning := false

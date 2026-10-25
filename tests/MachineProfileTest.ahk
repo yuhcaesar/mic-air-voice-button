@@ -15,7 +15,8 @@ try {
     Check(ProfileDigest("abc") = "BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD", "SHA256 implementation")
     devices := [{id: 2, hid: "ACPI\TEST_A"}, {id: 4, hid: "HID\VID_TEST"}]
     profile := {source: "key", device: "", usagePage: 12, usage: 1,
-        outputHid: devices[1].hid, outputId: 2, topology: ProfileTopology(devices), shortcut: "RAlt+Space"}
+        outputHid: devices[1].hid, outputId: 2, topology: ProfileTopology(devices), shortcut: "RAlt+Space",
+        volumeVerified: true}
     IniWrite("en", path, "UI", "Language")
     IniWrite("TEST_BOOT", path, "Driver", "BootId")
     before := FileRead(path)
@@ -23,12 +24,57 @@ try {
     SaveMicProfile(path, profile, machine)
     loaded := LoadMicProfile(path, machine)
     Check(IsObject(loaded) && loaded.source = "key" && loaded.outputId = 2
-        && loaded.shortcut = "RAlt+Space", "Confirmed profile round trip")
+        && loaded.shortcut = "RAlt+Space" && loaded.volumeVerified, "Confirmed profile round trip")
+    Check(IniRead(path, "Button", "Version") = "2"
+        && IniRead(path, "Button", "VolumeVerified") = "1", "Current schema persists explicit volume confirmation")
     Check(IniRead(path, "UI", "Language") = "en" && IniRead(path, "Driver", "BootId") = "TEST_BOOT", "Unrelated settings preserved")
     Check(IniRead(path, "Mapping", "EnableOnLaunch") = "1"
         && IniRead(path, "Mapping", "HardwareId") = profile.outputHid, "Mapping updated in same saved profile")
     Check(!LoadMicProfile(path, otherMachine) && !LoadMicProfile(path, ""), "Copied settings rejected on another/unknown machine")
     report .= "PASS synthetic SHA256; confirmed profile round trip; copied-machine rejection; unrelated settings preserved.`r`n"
+
+    ; The old voice-only confirmation must not silently become volume confirmation.
+    IniWrite(1, path, "Button", "Version")
+    IniWrite(1, path, "Button", "Verified")
+    before := FileRead(path)
+    Check(!LoadMicProfile(path, machine) && FileRead(path) = before,
+        "Version 1 remains rejected even with both confirmation flags present")
+    Check(IniRead(path, "Mapping", "Shortcut") = "RAlt+Space"
+        && IniRead(path, "Mapping", "HardwareId") = profile.outputHid
+        && IniRead(path, "UI", "Language") = "en", "Legacy rejection preserves migration inputs")
+    IniWrite(2, path, "Button", "Version")
+    for confirmation in ["0", ""] {
+        if confirmation = ""
+            IniDelete(path, "Button", "VolumeVerified")
+        else
+            IniWrite(confirmation, path, "Button", "VolumeVerified")
+        before := FileRead(path)
+        Check(!LoadMicProfile(path, machine) && FileRead(path) = before,
+            "Missing/false volume confirmation cannot load or rewrite settings")
+    }
+    SaveMicProfile(path, profile, machine)
+    before := FileRead(path)
+    for missing in [false, true] {
+        unconfirmed := profile.Clone()
+        if missing
+            unconfirmed.DeleteProp("volumeVerified")
+        else
+            unconfirmed.volumeVerified := false
+        rejected := false
+        try SaveMicProfile(path, unconfirmed, machine)
+        catch
+            rejected := true
+        Check(rejected && FileRead(path) = before,
+            "Unconfirmed volume cannot replace a verified profile")
+    }
+    registered := profile.Clone()
+    registered.source := "registered"
+    SaveMicProfile(path, registered, machine)
+    loaded := LoadMicProfile(path, machine)
+    Check(IsObject(loaded) && loaded.source = "registered" && loaded.volumeVerified,
+        "Confirmed registered input source round trip")
+    SaveMicProfile(path, profile, machine)
+    report .= "PASS legacy voice-only profiles and absent/false volume confirmation rejected without data loss; confirmed registered source round trip.`r`n"
 
     before := FileRead(path)
     invalid := profile.Clone()
