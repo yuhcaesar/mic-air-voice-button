@@ -41,10 +41,12 @@ DiagWriteSnapshot(path, snapshot, reason := "running", cleanupOk := false) {
     events := DiagGet(snapshot, "events", [])
     wireText .= "`neventCount=" Min(events.Length, 64)
     loop Min(events.Length, 64) {
-        event := events[A_Index]
-        wireText .= "`nevent" A_Index "_source=" DiagWord(DiagGet(event, "source", "unknown"))
+        ; The inner field loop changes A_Index; keep this record's outer index.
+        eventIndex := A_Index
+        event := events[eventIndex]
+        wireText .= "`nevent" eventIndex "_source=" DiagWord(DiagGet(event, "source", "unknown"))
         for field in ["down", "ms", "flags"]
-            wireText .= "`nevent" A_Index "_" field "=" DiagNumber(DiagGet(event, field))
+            wireText .= "`nevent" eventIndex "_" field "=" DiagNumber(DiagGet(event, field))
     }
     wireText .= "`nend=1`n"
     snapshotFile := FileOpen(path ".tmp", "w", "UTF-8")

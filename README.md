@@ -68,7 +68,7 @@ AirKey 默认中文。点击主界面右下角的 **English** 按钮即可切换
 
 ### 检查旧版为何没有响应
 
-可使用独立的 [AirKey 按钮检测工具](diagnostics/README.md)。它分别检查原始信号、旧版接收逻辑、系统热键、键盘监听和快捷键输出，生成可分享的脱敏报告；不会安装驱动或修改 AirKey 设置。[下载检测工具](https://github.com/yuhcaesar/mic-air-voice-button/releases/tag/diagnostics-v0.1.0)。
+可使用独立的 [AirKey 按钮检测工具](diagnostics/README.md)。它分别检查原始信号、旧版接收逻辑、系统热键、键盘监听和快捷键输出，生成可分享的脱敏报告；不会安装驱动或修改 AirKey 设置。[下载检测工具](https://github.com/yuhcaesar/mic-air-voice-button/releases/tag/diagnostics-v0.1.1)。
 
 ### 恢复音量键 / 卸载
 

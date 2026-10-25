@@ -70,7 +70,7 @@ If the button stops responding or you need to set it up again, open **Settings â
 
 ### Diagnose an unresponsive older version
 
-The standalone [AirKey Button Diagnostics tool](diagnostics/README.en.md) checks raw signals, legacy input handling, system hotkeys, keyboard hooks, and shortcut output. It creates a report without personal identifiers and does not install drivers or change AirKey settings. [Download the diagnostic tool](https://github.com/yuhcaesar/mic-air-voice-button/releases/tag/diagnostics-v0.1.0).
+The standalone [AirKey Button Diagnostics tool](diagnostics/README.en.md) checks raw signals, legacy input handling, system hotkeys, keyboard hooks, and shortcut output. It creates a report without personal identifiers and does not install drivers or change AirKey settings. [Download the diagnostic tool](https://github.com/yuhcaesar/mic-air-voice-button/releases/tag/diagnostics-v0.1.1).
 
 ### Restore Volume Up / uninstall
 

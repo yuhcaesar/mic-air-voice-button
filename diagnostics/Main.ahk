@@ -1,6 +1,6 @@
 ﻿;@Ahk2Exe-SetName AirKey Diagnostics
 ;@Ahk2Exe-SetDescription Portable AirKey button-path diagnostics
-;@Ahk2Exe-SetVersion 0.1.0.0
+;@Ahk2Exe-SetVersion 0.1.1.0
 ;@Ahk2Exe-SetOrigFilename AirKey-Diagnostics.exe
 #Requires AutoHotkey v2.0 64-bit
 #Warn All, StdOut
@@ -25,7 +25,7 @@ try {
         Diagnostic := DiagnosticWorker(A_Args[2], A_Args[3], Integer(A_Args[4]), Integer(A_Args[5]), A_Args[6])
     } else if A_Args.Length = 2 && A_Args[1] = "--self-test" {
         ExtractDiagnosticAssets(A_Args[2])
-        FileOpen(A_Args[2] "\component-check.txt", "w", "UTF-8").Write("AirKey Diagnostics 0.1.0`r`nPASS embedded DLL SHA256 and license extraction.`r`nNo input registration, key sends, driver changes or normal settings access.`r`n")
+        FileOpen(A_Args[2] "\component-check.txt", "w", "UTF-8").Write("AirKey Diagnostics 0.1.1`r`nPASS embedded DLL SHA256 and license extraction.`r`nNo input registration, key sends, driver changes or normal settings access.`r`n")
         ExitApp(0)
     } else if !A_Args.Length || (A_Args.Length = 1 && A_Args[1] = "--preview")
         Diagnostic := DiagnosticApp(A_Args.Length = 1)
@@ -440,6 +440,7 @@ class DiagnosticApp {
                 this.reportPath := folder "\AirKey-检测报告-" FormatTime(, "yyyyMMdd-HHmmss") "-" Random(1000, 9999) ".txt"
             }
             report := BuildDiagnosticReport(this.environment, this.phases, this.trials)
+            report .= "`r`n检测工具版本：0.1.1`r`n"
             report .= "`r`n本次试发快捷键：" this.binding.canonical "`r`n"
             report .= "`r`n按钮事件时序（相对毫秒；只含音量＋相关事件）`r`n"
             for phase in this.phases {

@@ -1,4 +1,4 @@
-﻿; Read-only diagnostic collection and deliberately conservative report analysis.
+; Read-only diagnostic collection and deliberately conservative report analysis.
 ; No input, hooks, driver changes, persistence, GUI, or action on #Include.
 ; GetDriverStatus and keyboard enumeration are performed once by the caller.
 ; All exported objects/text use explicit field allowlists. Hardware IDs exist
@@ -70,6 +70,7 @@ ReadDiagnosticConfig(path) {
 AnalyzeDiagnosticResults(phases, trials := []) {
     result := {confirmed: [], notObserved: [], needsVerification: []}
     safePhases := DRPhases(phases), safeTrials := DRTrials(trials)
+    result.needsVerification.Push("本工具分别进行旧版输入模拟和独立快捷键试发，未串联“实体按钮→旧版完整程序→豆包语音”。即使各项通过，也尚未重现历史失败，历史根因仍未确定。")
     if !safePhases.Length
         result.needsVerification.Push("尚未完成按钮采样。")
     for phase in safePhases {
@@ -94,6 +95,10 @@ AnalyzeDiagnosticResults(phases, trials := []) {
             result.confirmed.Push(label "：观察到 WM_HOTKEY " c.wmHotkey " 次。")
         if c.eligible > 0
             result.confirmed.Push(label "：" c.eligible " 次通过模拟发送前的条件检查；此计数不代表已经发送或启动豆包。")
+        if phase.phaseId = "legacy" && phase.gates.unarmed > 0 {
+            result.confirmed.Push(label "：模拟旧版的防重复触发逻辑拦截了 " phase.gates.unarmed " 次回调（尚未重新允许触发）；这不等于发生故障，也不代表同样次数的独立按压。")
+            result.needsVerification.Push(label "：需结合可靠事件时序和实际按压次数，判断被拦截的是重复信号，还是另一次独立按压；仅凭拦截次数不能判断旧版失效原因。")
+        }
         if valid && c.rawKeyboardDown = 0 && c.hidDown = 0
             result.notObserved.Push(label "：用户确认已按按钮，本次未记录到原始键盘或媒体按钮事件。")
         if phase.phaseId = "hook" && valid && !phase.errors.Length && c.hidDown > 0 && c.hookDown = 0
@@ -101,7 +106,7 @@ AnalyzeDiagnosticResults(phases, trials := []) {
         if phase.errors.Length
             result.needsVerification.Push(label "：存在采样或清理错误，请结合技术计数重新测试。")
     }
-    manualSuccess := false, successes := Map(), failures := Map()
+    manualSuccess := false, successes := Map(), failures := Map(), reportedAliases := Map()
     for trial in safeTrials {
         label := DRTrialLabel(trial.kind)
         if trial.kind = "manual" {
@@ -113,6 +118,27 @@ AnalyzeDiagnosticResults(phases, trials := []) {
             else
                 result.needsVerification.Push(label "：尚未由用户确认结果。")
             continue
+        }
+        ; Main records one row per selection-rule alias after one physical trial.
+        ; Group only matching results; contradictory results remain visible.
+        if trial.candidateIndex {
+            aliases := Map(), aliasLabels := ""
+            for other in safeTrials {
+                if other.kind = "manual" || other.candidateIndex != trial.candidateIndex
+                    || other.sent != trial.sent || other.confirmed != trial.confirmed || other.errorCode != trial.errorCode
+                    continue
+                if !aliases.Has(other.kind) {
+                    aliases[other.kind] := true
+                    aliasLabels .= (aliasLabels = "" ? "" : "、") DRTrialLabel(other.kind)
+                }
+            }
+            if aliases.Count > 1 {
+                aliasKey := trial.candidateIndex "|" trial.sent "|" trial.confirmed "|" trial.errorCode
+                if reportedAliases.Has(aliasKey)
+                    continue
+                reportedAliases[aliasKey] := true
+                label := "候选 " trial.candidateIndex "（" aliasLabels "；这些标签对应同一次试发，不算独立成功）"
+            }
         }
         if trial.sent = 1 {
             if trial.confirmed = "success" {
@@ -191,6 +217,7 @@ BuildDiagnosticReport(environment, phases, trials := []) {
         result .= "[output/" trial.kind "] candidate=" trial.candidateIndex " delivered=" DRBoolLabel(trial.sent)
             . " user=" trial.confirmed " error=" trial.errorCode "`r`n"
     result .= "`r`n说明：事件计数可能来自同一次物理按键，不能相加当作按键次数。sendAttempt 为进入模拟发送门禁次数，eligible 为通过模拟门禁次数；两者都没有发送按键。`r`n"
+    result .= "同一 candidate 下结果一致的多个选法标签对应同次试发，不能按标签数量计算独立成功次数；技术行保留各标签便于核对。`r`n"
     result .= "本工具不会自动检测豆包是否在录音，启动结果以用户确认记录。没有响应不能单独证明驱动或硬件故障。`r`n"
     result .= "旧版候选是按当前电脑推测的选择；当前槽位 1 不一定是历史日志中的同一设备。`r`n"
     result .= "隐私：此报告不包含用户名、电脑名、网络地址、设备硬件标识、序列号、文件路径、输入内容或完整进程列表。`r`n"

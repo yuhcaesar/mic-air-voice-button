@@ -4,6 +4,10 @@
 
 A standalone Windows x64 tool for checking how a Mic Air button reaches Windows and whether an existing keyboard output channel can activate Doubao voice input. It records current observations to help distinguish input reception, legacy callback gating, and shortcut output. It cannot guarantee reconstruction of the cause of a past failure. The diagnostic interface and generated report are currently in Chinese.
 
+## 0.1.1 correction
+
+Fixes event timestamps, down/up states, and flags being written under incorrect event indices in 0.1.0. Aggregate counters and user confirmations remain usable, but old timelines cannot establish press spacing or repeated signals. Use 0.1.1 for a new capture; missing fields cannot be recovered from old reports. Output labels sharing one candidate index describe one trial under multiple selection rules, not independent trials.
+
 ## Use
 
 1. Connect the Mic Air receiver. Exit AirKey from its tray menu and close any standalone volume experiment tool. Place `AirKey-Diagnostics.exe` in a writable local folder, double-click it, and choose **开始检测** (Start).

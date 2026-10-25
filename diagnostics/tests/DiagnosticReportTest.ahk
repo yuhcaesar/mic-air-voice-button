@@ -1,4 +1,4 @@
-﻿#Requires AutoHotkey v2.0 64-bit
+#Requires AutoHotkey v2.0 64-bit
 #SingleInstance Off
 #NoTrayIcon
 #Include ..\DiagnosticReport.ahk
@@ -125,6 +125,49 @@ try {
     Check(HasReportText(AnalyzeDiagnosticResults([], [{kind: "manual", confirmation: "success"}]).confirmed, "豆包语音已启动"), "Manual baseline supports confirmation alias without a send")
     Check(HasReportText(AnalyzeDiagnosticResults([], [{kind: "legacy_slot1", sent: true, confirmed: "untested"}]).needsVerification, "当前槽位 1"), "Current slot 1 is distinct from legacy selection rules")
     testReport .= "PASS manual/automated outcome separation, delivered versus response, anonymous A/B identity and historical limits.`r`n"
+
+    observedBaseline := FixturePhase("baseline")
+    observedBaseline.counts := {rawKeyboardDown: 1, rawKeyboardUp: 1, hidDown: 1, hidUp: 1}
+    observedLegacy := FixturePhase("legacy")
+    observedLegacy.counts := {legacyHotkey: 4, wmHotkey: 4, hidDown: 4, hidUp: 4, eligible: 1, sendAttempt: 1, rearmed: 1}
+    observedLegacy.gates := {unarmed: 3}
+    observedRegistered := FixturePhase("registered")
+    observedRegistered.counts := {registeredHotkey: 4, wmHotkey: 4, hidDown: 4, hidUp: 4}
+    observedHook := FixturePhase("hook")
+    observedHook.counts := {hookDown: 2, hookUp: 2, llDown: 2, llUp: 2, rawKeyboardDown: 2, rawKeyboardUp: 2, hidDown: 2, hidUp: 2}
+    observedPhases := [observedBaseline, observedLegacy, observedRegistered, observedHook]
+    aliases := [manual, {kind: "legacy_first", sent: true, confirmed: "success", candidateIndex: 1},
+        {kind: "matched", sent: true, confirmed: "success", candidateIndex: 1},
+        {kind: "legacy_slot1", sent: true, confirmed: "success", candidateIndex: 1}]
+    analysis := AnalyzeDiagnosticResults(observedPhases, aliases)
+    Check(HasReportText(analysis.confirmed, "模拟旧版的防重复触发逻辑拦截了 3 次回调")
+        && HasReportText(analysis.confirmed, "这不等于发生故障"), "Unarmed callbacks are an observed gate result, not a diagnosed failure")
+    Check(HasReportText(analysis.needsVerification, "可靠事件时序")
+        && HasReportText(analysis.needsVerification, "重复信号，还是另一次独立按压"), "Throttle count alone cannot distinguish repeats from a separate press")
+    deliveredObservations := 0
+    for item in analysis.confirmed
+        if InStr(item, "快捷键已交付，用户确认豆包语音已启动")
+            deliveredObservations++
+    Check(deliveredObservations = 1 && HasReportText(analysis.confirmed, "同一次试发，不算独立成功"), "Three same-candidate aliases render one delivered success")
+    for label in ["按旧版首次运行规则", "当前保存的匹配连接", "当前槽位 1"]
+        Check(HasReportText(analysis.confirmed, label), "Coalescing preserves every selection-rule label")
+    Check(!HasReportText(analysis.confirmed, "本次输出选择差异"), "Same-candidate success aliases are not separate-device evidence")
+    Check(HasReportText(analysis.needsVerification, "未串联") && HasReportText(analysis.needsVerification, "历史根因仍未确定"), "Passing isolated paths cannot explain the historical end-to-end failure")
+    reportText := BuildDiagnosticReport(environment, observedPhases, aliases)
+    Check(!InStr(reportText, "仍需验证`r`n- 暂无。"), "Successful observations must not erase the untested historical question")
+    testReport .= "PASS four callbacks/one eligible/three unarmed observations and one shared-candidate output success.`r`n"
+
+    observedBaseline.counts := {rawKeyboardDown: 2, rawKeyboardUp: 2, hidDown: 2, hidUp: 2}
+    observedLegacy.counts := {legacyHotkey: 2, wmHotkey: 2, hidDown: 2, hidUp: 2, eligible: 2, sendAttempt: 2, rearmed: 2}
+    observedLegacy.gates := {}
+    observedRegistered.counts := {registeredHotkey: 2, wmHotkey: 2, hidDown: 2, hidUp: 2}
+    analysis := AnalyzeDiagnosticResults(observedPhases, aliases)
+    Check(!analysis.notObserved.Length && !HasReportText(analysis.confirmed, "模拟旧版的防重复触发逻辑拦截"), "Clean full pass has no invented missing input or throttle fault")
+    Check(HasReportText(analysis.needsVerification, "旧版输入模拟和独立快捷键试发")
+        && HasReportText(analysis.needsVerification, "尚未重现历史失败"), "Normal two-press success still does not reproduce the historical full application")
+    Check(!HasReportText(analysis, "已排除") && !HasReportText(analysis, "已经修复"), "Present success never excludes historical conflict or claims a fix")
+    Check(!InStr(BuildDiagnosticReport(environment, observedPhases, aliases), "仍需验证`r`n- 暂无。"), "All-green report retains unresolved historical cause")
+    testReport .= "PASS normal two-press full pass retains the untested legacy chain and unknown historical cause.`r`n"
 
     poisoned := FixturePhase(poison)
     poisoned.durationMs := poison
