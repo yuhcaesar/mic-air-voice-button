@@ -1,7 +1,8 @@
 ; AHK v2 x64. No input registration, device enumeration or I/O on include/new.
-; Learn(onDetected): observe one Volume Up press for at least 1000 ms,
-; then Stop before onDetected(profile). Registered hotkey > hook > consumer HID. A raw
-; keyboard event alone does not prove that the suppressing hook works.
+; Learn(onDetected, preference:="standard"): observe a press for at least 1000 ms,
+; then Stop before onDetected(profile). Standard learns registered hotkey > hook;
+; compatibility learns consumer HID only. Neither mode falls back to the other.
+; A raw keyboard event alone does not prove that the suppressing hook works.
 ; __New(guardPath:=""): no I/O; the HID guard is constructed lazily on Start.
 ; Start(profile,onPress,onFault:=0): registered uses Win32 RegisterHotKey,
 ; key uses *$Volume_Up, and hid requires NativeVolumeGuard before Raw Input.
@@ -16,6 +17,7 @@
 ; https://learn.microsoft.com/windows-hardware/drivers/ddi/hidpi/nf-hidpi-hidp_getusages
 ; Blank WM_INPUT returns let AHK's default window procedure perform cleanup.
 #Include Localization.ahk
+#Include MachineProfile.ahk
 #Include NativeVolumeGuard.ahk
 
 class MicButtonInput {
@@ -27,6 +29,7 @@ class MicButtonInput {
         if A_PtrSize != 8
             throw LocalError("按钮监听需要 64 位程序。", "Button input requires the 64-bit app.")
         this.mode := ""
+        this.preference := "standard"
         this.profile := 0
         this.onDetected := 0
         this.onPress := 0
@@ -67,17 +70,24 @@ class MicButtonInput {
         this.faultTimer := ObjBindMethod(this, "_DeliverFault")
     }
 
-    Learn(onDetected) {
+    Learn(onDetected, preference := "standard") {
+        if !ValidMicMode(preference)
+            throw LocalError("按钮模式无效，请重新选择。", "Invalid button mode. Choose a mode again.")
         this.Stop()
         this._Claim()
         this.mode := "learn"
+        this.preference := preference
         this.onDetected := onDetected
         this.LastError := ""
         this.RegistrationError := 0
         try {
-            this._SetRegistered(true, false)
-            this._SetRaw(true, true)
-            this._SetHooks(true, true)
+            if preference = "compatibility"
+                this._SetRaw(true, false)
+            else {
+                this._SetRegistered(true, false)
+                this._SetRaw(true, true)
+                this._SetHooks(true, true)
+            }
         } catch as err {
             try this.Stop()
             throw err
@@ -139,6 +149,7 @@ class MicButtonInput {
         this.sawHook := false
         this.sawRegistered := false
         this.learnStarted := 0
+        this.preference := "standard"
         this.learnDevices.Clear()
         this.hidStates.Clear()
         this.devices.Clear()
@@ -170,13 +181,15 @@ class MicButtonInput {
         return {source: profile.source, device: profile.source = "hid" ? device : "", usagePage: 12, usage: 1}
     }
 
-    static ChooseLearnProfile(sawHook, hidDevice, sawRegistered := false) {
+    static ChooseLearnProfile(sawHook, hidDevice, sawRegistered := false, preference := "standard") {
+        if !ValidMicMode(preference)
+            throw LocalError("按钮模式无效，请重新选择。", "Invalid button mode. Choose a mode again.")
+        if preference = "compatibility"
+            return hidDevice != "" ? {source: "hid", device: hidDevice, usagePage: 12, usage: 1} : 0
         if sawRegistered
             return {source: "registered", device: "", usagePage: 12, usage: 1}
         if sawHook
             return {source: "key", device: "", usagePage: 12, usage: 1}
-        if hidDevice != ""
-            return {source: "hid", device: hidDevice, usagePage: 12, usage: 1}
         return 0
     }
 
@@ -194,6 +207,8 @@ class MicButtonInput {
     FeedRegistered() {
         if !this.hotkeyRegistered || !(this.mode = "learn" || this.mode = "registered") || this.faultPending
             return
+        if this.mode = "learn" && this.preference != "standard"
+            return
         if this.mode = "learn" {
             this.sawRegistered := true
             this._BeginCorrelation()
@@ -203,6 +218,8 @@ class MicButtonInput {
 
     FeedHook(isDown) {
         if !(this.mode = "learn" || this.mode = "key") || this.faultPending
+            return
+        if this.mode = "learn" && this.preference != "standard"
             return
         wasDown := this.hookHeld
         this.hookHeld := !!isDown
@@ -217,7 +234,7 @@ class MicButtonInput {
 
     FeedKeyboard(vkey, isDown) {
         ; Do not retain or act on any other keyboard key.
-        if this.mode != "learn" || vkey != 0xAF
+        if this.mode != "learn" || this.preference != "standard" || vkey != 0xAF
             return
         wasDown := this.rawKeyHeld
         this.rawKeyHeld := !!isDown
@@ -227,6 +244,8 @@ class MicButtonInput {
 
     FeedHid(device, reportId, isDown) {
         if !(this.mode = "learn" || this.mode = "hid") || this.faultPending || device = ""
+            return
+        if this.mode = "learn" && this.preference != "compatibility"
             return
         if this.mode = "hid" && StrLower(device) != StrLower(this.profile.device)
             return
@@ -272,7 +291,7 @@ class MicButtonInput {
         if this.learnDevices.Count = 1
             for name, original in this.learnDevices
                 device := original
-        profile := MicButtonInput.ChooseLearnProfile(this.sawHook, device, this.sawRegistered)
+        profile := MicButtonInput.ChooseLearnProfile(this.sawHook, device, this.sawRegistered, this.preference)
         this.sawHook := false
         this.sawRegistered := false
         this.learnDevices.Clear()
@@ -376,7 +395,7 @@ class MicButtonInput {
         if required
             throw LocalError("音量键暂时无法注册（错误 {1}），请关闭其他按键映射工具后重试。",
                 "Volume Up could not be registered (error {1}). Close other key-mapping tools and retry.", result.code)
-        return false ; Learning may still prove a hook or HID source.
+        return false ; Standard learning may still prove the hook source.
     }
 
     _NativeRegistered(enabled) {
@@ -533,7 +552,7 @@ class MicButtonInput {
                 return
             kind := NumGet(raw, 0, "UInt")
             if kind = 1 {
-                if this.mode = "learn" && copied >= 40 {
+                if this.mode = "learn" && this.preference = "standard" && copied >= 40 {
                     vkey := NumGet(raw, 30, "UShort")
                     if vkey = 0xAF
                         this.FeedKeyboard(vkey, !(NumGet(raw, 26, "UShort") & 1))
@@ -542,6 +561,8 @@ class MicButtonInput {
             }
             if kind != 2 || copied < 33
                 return
+            if this.mode = "learn" && this.preference != "compatibility"
+                return ; Standard learning does not retain HID identities or state.
             handle := NumGet(raw, 8, "Ptr")
             if !handle
                 return

@@ -1,5 +1,38 @@
 #Include Localization.ahk
 
+ValidMicMode(mode) => Type(mode) = "String" && (mode == "standard" || mode == "compatibility")
+
+; Classify learned and persisted profiles alike; this does not validate them.
+MicProfileMode(profile) {
+    return IsObject(profile) && profile.HasOwnProp("source") && Type(profile.source) = "String" && profile.source == "hid"
+        ? "compatibility" : "standard"
+}
+
+; A local mode preference is not a verified profile and never enables input.
+; Read only these three keys; hardware identities and confirmation flags are
+; irrelevant when offering the previous mode for a new setup.
+LoadMicModePreference(path, machineKey) {
+    if machineKey = ""
+        return "standard"
+    try {
+        if IniRead(path, "Button", "Machine", "") != machineKey
+            return "standard"
+        source := IniRead(path, "Button", "Source", "")
+        if !(source == "registered" || source == "key" || source == "hid")
+            return "standard"
+        mode := MicProfileMode({source: source})
+        savedMode := IniRead(path, "Button", "Mode", "")
+        if savedMode = "" {
+            ; A second, different default distinguishes a missing key from an
+            ; explicitly empty value, without reading the whole Button section.
+            if IniRead(path, "Button", "Mode", "!missing-mode!") == "!missing-mode!"
+                return mode
+        } else if ValidMicMode(savedMode) && savedMode == mode
+            return mode
+    }
+    return "standard"
+}
+
 ; These identifiers stay in the local settings file. Never put them in logs.
 GetMachineProfileKey() {
     try {
@@ -51,7 +84,16 @@ LoadMicProfile(path, machineKey) {
             outputId: Integer(IniRead(path, "Button", "OutputId", "0")),
             topology: IniRead(path, "Button", "Topology", ""),
             shortcut: IniRead(path, "Button", "Shortcut", ""), volumeVerified: true}
-        return ValidMicProfile(profile) ? profile : 0
+        if !ValidMicProfile(profile)
+            return 0
+        ; Missing Mode is a valid version-2 legacy file. An explicitly present
+        ; Mode, including an empty value, must agree with the source of truth.
+        if RegExMatch(IniRead(path, "Button"), "im)^[ \t]*Mode[ \t]*=") {
+            savedMode := IniRead(path, "Button", "Mode", "")
+            if !ValidMicMode(savedMode) || savedMode != MicProfileMode(profile)
+                return 0
+        }
+        return profile
     }
     return 0
 }
@@ -74,6 +116,7 @@ SaveMicProfile(path, profile, machineKey) {
             FileCopy(path, temporary)
         IniWrite(0, temporary, "Button", "Verified")
         values := Map("Version", 2, "VolumeVerified", 1, "Machine", machineKey, "Source", profile.source,
+            "Mode", MicProfileMode(profile),
             "Device", profile.device, "OutputHardwareId", profile.outputHid,
             "OutputId", profile.outputId, "Topology", profile.topology, "Shortcut", profile.shortcut)
         for key, value in values

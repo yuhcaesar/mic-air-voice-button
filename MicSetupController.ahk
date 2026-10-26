@@ -6,10 +6,18 @@ MicSetupActive() {
 }
 
 BeginMicSetup(*) {
+    global S, ConfigPath
+    mode := IsObject(S.profile) ? MicProfileMode(S.profile) : LoadMicModePreference(ConfigPath, S.machine)
+    BeginMicSetupMode(mode)
+}
+
+BeginMicSetupMode(mode) {
     global S, UI
-    if S.busy || S.maintenance || S.editing || S.held.keys.Length || S.pendingReboot
+    if !ValidMicMode(mode) || S.busy || S.maintenance || S.editing || S.held.keys.Length || S.pendingReboot
         return
     if MicSetupActive() {
+        if S.setup.mode != mode
+            SwitchMicSetupMode(mode)
         S.setup.dialog.window.Show()
         return
     }
@@ -19,16 +27,50 @@ BeginMicSetup(*) {
     StopMapping(false)
     S.settingUp := true
     S.setup := {dialog: 0, stage: "starting", profile: 0, candidates: [], index: 1,
-        priorEnabled: wasEnabled, tested: false, notBefore: 0}
+        mode: mode, priorEnabled: wasEnabled, tested: false, notBefore: 0, retryOutput: false}
     try {
-        S.setup.dialog := ShowMicSetup(UI["window"], CancelMicSetup, StartMicLearning,
-            ConfirmMicSetup, NextMicOutput, MicSetupVolumeIssue)
+        S.setup.dialog := ShowMicSetup(UI["window"], CancelMicSetup, RetryMicSetup,
+            ConfirmMicSetup, NextMicOutput, MicSetupVolumeIssue, SwitchMicSetupMode, mode)
         StartMicLearning()
     } catch as err {
         CancelMicSetup(false)
         S.notice := N("无法开始按钮设置：{1}", "Could not start button setup: {1}", ErrorText(err))
     }
     UpdateUI()
+}
+
+SwitchMicSetupMode(mode) {
+    global S
+    if !MicSetupActive() || !ValidMicMode(mode) || mode = S.setup.mode || S.busy || S.held.keys.Length
+        return
+    SetTimer(MicLearningTimeout, 0)
+    S.setup.stage := "switching"
+    S.setup.tested := false
+    try {
+        ; Keep the old mode/profile until the old listener and guard are stopped.
+        if IsObject(S.button)
+            S.button.Stop()
+        S.setup.mode := mode
+        S.setup.profile := 0
+        S.setup.retryOutput := false
+        S.setup.dialog.SetMode(mode)
+        StartMicLearning()
+    } catch as err
+        MicInputFault(ErrorText(err), "mode_switch")
+}
+
+RetryMicSetup(*) {
+    global S
+    if !MicSetupActive() || S.busy || S.held.keys.Length || S.setup.stage != "failed"
+        return
+    if !S.setup.retryOutput
+        return StartMicLearning()
+    try {
+        S.button.Stop()
+        S.button.Start(S.setup.profile, MicSetupPress, MicInputFault)
+        PrepareMicTrial()
+    } catch as err
+        MicInputFault(ErrorText(err), "input_start")
 }
 
 StartMicLearning(*) {
@@ -48,11 +90,13 @@ StartMicLearning(*) {
                 "No usable connection was found. Connect a keyboard and the Mic Air receiver, then retry.")
         S.setup.index := 1
         S.setup.tested := false
+        S.setup.retryOutput := false
         S.setup.profile := 0
         S.setup.stage := "learning"
+        S.setup.dialog.SetMode(S.setup.mode)
         S.setup.dialog.Listening()
         S.button := MicButtonInput(DataDir "\components\volume-guard.dll")
-        S.button.Learn(MicButtonDetected)
+        S.button.Learn(MicButtonDetected, S.setup.mode)
         SetTimer(MicLearningTimeout, -30000)
         Log("setup_listening")
     } catch as err {
@@ -72,6 +116,12 @@ MicButtonDetected(profile) {
     if !MicSetupActive() || S.setup.stage != "learning"
         return
     SetTimer(MicLearningTimeout, 0)
+    if !IsObject(profile) || !profile.HasOwnProp("source")
+        || (S.setup.mode = "compatibility" ? profile.source != "hid" : !(profile.source = "registered" || profile.source = "key")) {
+        MicInputFault(N("收到的按钮消息不符合当前模式。请重试，或手动切换模式。",
+            "The button response does not match this mode. Retry or switch modes manually."), "mode_mismatch")
+        return
+    }
     S.setup.profile := profile
     Log("setup_button_detected mode=" profile.source)
     try {
@@ -93,6 +143,7 @@ PrepareMicTrial() {
     }
     S.setup.stage := "ready"
     S.setup.tested := false
+    S.setup.retryOutput := false
     ; Ignore the tail of the initial learning press or the last trial.
     S.setup.notBefore := A_TickCount + 800
     S.setup.dialog.Ready(S.setup.profile.source, S.setup.index, S.setup.candidates.Length)
@@ -142,9 +193,11 @@ MicSetupPress(*) {
                 MicInputFault(N("请手动按下并松开设置中的快捷键，再关闭并重新打开程序。",
                     "Press and release the configured shortcut manually, then close and reopen AirKey."))
             } else if trialFailed {
-                if !focusLost
+                if !focusLost {
                     S.setup.index++
-                PrepareMicTrial()
+                    OfferNextMicTrial()
+                } else
+                    PrepareMicTrial()
             }
         } finally Critical("Off")
     }
@@ -156,7 +209,15 @@ NextMicOutput(*) {
         return
     Log("setup_user_result not_started candidate=" S.setup.index)
     S.setup.index++
-    PrepareMicTrial()
+    OfferNextMicTrial()
+}
+
+OfferNextMicTrial() {
+    global S
+    if S.setup.index > S.setup.candidates.Length
+        return PrepareMicTrial()
+    MicInputFault(N("这次没有启动豆包语音。点击重试以继续尝试，或改用另一种模式。",
+        "Voice input did not start. Retry the next connection, or switch modes."), "trial", true)
 }
 
 ConfirmMicSetup(*) {
@@ -164,6 +225,8 @@ ConfirmMicSetup(*) {
     if !MicSetupActive() || S.setup.stage != "confirming" || !S.setup.tested || S.busy || S.held.keys.Length
         return
     try {
+        if MicProfileMode(S.setup.profile) != S.setup.mode
+            throw LocalError("模式已改变，请重新识别按钮。", "The mode changed. Please detect the button again.")
         chosen := S.devices[S.setup.candidates[S.setup.index]]
         currentDevices := S.native.Enumerate()
         if ProfileTopology(currentDevices) != ProfileTopology(S.devices)
@@ -200,8 +263,8 @@ MicSetupVolumeIssue(*) {
     if !MicSetupActive() || S.setup.stage != "confirming" || S.busy
         return
     S.setup.tested := false
-    MicInputFault(N("音量仍在变化，本次设置没有保存。请点击重试重新识别；若仍出现此问题，请取消设置。",
-        "The volume still changes, so this setup was not saved. Retry button detection; cancel setup if it still happens."), "volume_changed")
+    MicInputFault(N("音量仍在变化，本次设置没有保存。请重试重新识别，或改用另一种模式。",
+        "Volume still changes, so setup was not saved. Retry detection or switch modes."), "volume_changed")
 }
 
 FinishMicSetup() {
@@ -236,7 +299,7 @@ CancelMicSetup(restore := true, *) {
     wasEnabled := S.setup.priorEnabled
     if !FinishMicSetup()
         return
-    S.notice := N("设置已取消。完成按钮识别后即可启用。", "Setup cancelled. Finish button setup to enable voice input.")
+    S.notice := N("设置已取消，原来的设置已保留。", "Setup cancelled. Your previous settings were kept.")
     Log("setup_cancelled")
     if restore && wasEnabled && IsObject(S.profile)
         EnableMapping()
@@ -260,16 +323,21 @@ class MicSetupOutput {
     }
 }
 
-MicInputFault(message, stage := "input") {
+MicInputFault(message, stage := "input", retryOutput := false) {
     global S, ConfigPath
     SetTimer(MicLearningTimeout, 0)
-    if IsObject(S.button)
+    stopped := true
+    if IsObject(S.button) {
         try S.button.Stop()
+        catch
+            stopped := false
+    }
     Log("button_input_fault stage=" stage)
     if MicSetupActive() {
         S.setup.stage := "failed"
         S.setup.tested := false
-        S.setup.dialog.Failure(message, !S.held.keys.Length)
+        S.setup.retryOutput := retryOutput && stopped && !S.held.keys.Length
+        S.setup.dialog.Failure(message, stopped && !S.held.keys.Length)
         return
     }
     StopMapping(true)

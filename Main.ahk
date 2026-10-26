@@ -15,7 +15,7 @@
 #Include MicSetupController.ahk
 ;@Ahk2Exe-SetName AirKey
 ;@Ahk2Exe-SetDescription AirKey for Insta360 Mic Air and Doubao voice input
-;@Ahk2Exe-SetVersion 1.3.0.0
+;@Ahk2Exe-SetVersion 1.4.0.0
 ;@Ahk2Exe-SetOrigFilename AirKey.exe
 
 global PersonalEdition := false
@@ -172,7 +172,7 @@ BuildGui() {
         g.AddPicture("x330 y124 w112 h112", fallbackVoiceArt)
     g.SetFont("s23 norm cA8B9B0")
     g.AddText("x242 y161 w36 h42 Center", "→")
-    g.SetFont("s11 bold c29433C")
+    g.SetFont("s10 bold c29433C")
     UI["micAction"] := g.AddText("x28 y249 w212 h28 Center", "")
     UI["voiceTarget"] := g.AddText("x280 y249 w212 h28 Center", "")
     g.SetFont("s9 norm c71827B")
@@ -199,18 +199,29 @@ BuildGui() {
     UI["language"].OnEvent("Click", SwitchLanguage)
 
     g.SetFont("s11 bold c29433C")
-    UI["shortcutHeading"] := g.AddText("x30 y557 w420 h28 Hidden", "")
+    UI["modeHeading"] := g.AddText("x30 y554 w104 h26 Hidden", "")
+    UI["advancedControls"].Push(UI["modeHeading"])
+    g.SetFont("s9 norm")
+    UI["modeStandard"] := ModernButton(g, "x140 y548 w200 h36 Hidden", "", "secondary")
+    UI["modeStandard"].OnEvent("Click", SelectMicMode.Bind("standard"))
+    UI["modeCompatibility"] := ModernButton(g, "x348 y548 w144 h36 Hidden", "", "secondary")
+    UI["modeCompatibility"].OnEvent("Click", SelectMicMode.Bind("compatibility"))
+    g.SetFont("s9 norm c71827B")
+    UI["modeHint"] := g.AddText("x30 y593 w462 h25 Hidden", "")
+    UI["advancedControls"].Push(UI["modeStandard"], UI["modeCompatibility"], UI["modeHint"])
+    g.SetFont("s10 bold c29433C")
+    UI["shortcutHeading"] := g.AddText("x30 y634 w126 h26 Hidden", "")
     UI["advancedControls"].Push(UI["shortcutHeading"])
     g.SetFont("s10 norm c29433C")
-    UI["shortcutSetting"] := g.AddText("x30 y591 w340 h38 Hidden", ShortcutDisplayLabel(S.binding))
-    UI["editShortcut"] := ModernButton(g, "x396 y587 w96 h38 Hidden", "修改", "secondary")
+    UI["shortcutSetting"] := g.AddText("x164 y628 w220 h38 Hidden", ShortcutDisplayLabel(S.binding))
+    UI["editShortcut"] := ModernButton(g, "x396 y625 w96 h38 Hidden", "修改", "secondary")
     UI["editShortcut"].OnEvent("Click", EditShortcut)
     UI["advancedControls"].Push(UI["shortcutSetting"], UI["editShortcut"])
     g.SetFont("s9 c71827B")
-    UI["shortcutHint"] := g.AddText("x30 y632 w462 h23 Hidden", "")
+    UI["shortcutHint"] := g.AddText("x30 y671 w462 h23 Hidden", "")
     UI["advancedControls"].Push(UI["shortcutHint"])
     g.SetFont("s9 c29433C")
-    UI["refresh"] := ModernButton(g, "x22 y672 w220 h34 Hidden", "重新识别按钮", "ghost")
+    UI["refresh"] := ModernButton(g, "x22 y708 w220 h34 Hidden", "重新识别按钮", "ghost")
     UI["refresh"].OnEvent("Click", Reconfigure)
     UI["advancedControls"].Push(UI["refresh"])
 
@@ -263,7 +274,8 @@ ApplyLanguage() {
     UI["uninstall"].Text := L("卸载并恢复", "Uninstall && Restore")
     UI["trayHint"].Text := L("最小化到托盘 · 点击托盘图标恢复", "Minimize to tray · Click icon to reopen")
     UI["language"].Text := L("English", "中文")
-    UI["shortcutHeading"].Text := L("启动豆包的快捷键", "Shortcut for Doubao voice input")
+    UI["modeHeading"].Text := L("按钮模式", "Button mode")
+    UI["shortcutHeading"].Text := L("语音快捷键", "Voice shortcut")
     UI["shortcutHint"].Text := L("请与豆包里的快捷键保持一致。", "Use the same shortcut as in your Doubao settings.")
     UI["refresh"].Text := L("重新识别按钮", "Set Up Button Again")
     UI["editShortcut"].Text := L("修改", "Edit")
@@ -304,7 +316,18 @@ ToggleAdvanced(forceOpen := false) {
         control.Visible := S.advancedOpen
     UI["advanced"].Text := S.advancedOpen ? L("收起设置", "Hide Settings") : L("设置", "Settings")
     ModernRedraw(UI["advanced"])
-    UI["window"].Show(S.advancedOpen ? "w520 h728" : "w520 h548")
+    UI["window"].Show(S.advancedOpen ? "w520 h764" : "w520 h548")
+}
+
+SelectMicMode(mode, *) {
+    global S
+    if !ValidMicMode(mode) || MicSetupActive() || S.busy || S.maintenance
+        || S.pendingReboot || S.editing || S.held.keys.Length || !DriverReady()
+        return
+    if IsObject(S.profile) && MicProfileMode(S.profile) = mode && S.selected
+        return
+    ; A button click requests a verified setup; it never changes the active profile.
+    BeginMicSetupMode(mode)
 }
 
 EditShortcut(*) {
@@ -627,7 +650,7 @@ DriverOperation(action) {
 }
 
 UpdateUI() {
-    global UI, S, Driver
+    global UI, S, Driver, ConfigPath
     if !UI.Has("window") || !IsObject(Driver)
         return
     needsSetup := !IsObject(S.profile) || !S.selected
@@ -639,14 +662,26 @@ UpdateUI() {
     UI["editShortcut"].Enabled := !S.maintenance && !S.busy && !S.held.keys.Length && !S.editing
     UI["shortcutSummary"].Text := ShortcutDisplayLabel(S.binding)
     UI["shortcutSetting"].Text := ShortcutDisplayLabel(S.binding)
+    currentMode := IsObject(S.profile) ? MicProfileMode(S.profile) : LoadMicModePreference(ConfigPath, S.machine)
+    modeReady := DriverReady() && !S.maintenance && !S.busy && !S.pendingReboot
+        && !S.editing && !S.held.keys.Length && !MicSetupActive()
+    UI["modeStandard"].Text := (currentMode = "standard" ? "✓ " : "") L("标准模式（推荐）", "Standard (recommended)")
+    UI["modeCompatibility"].Text := (currentMode = "compatibility" ? "✓ " : "") L("兼容模式", "Compatibility")
+    for name, mode in Map("modeStandard", "standard", "modeCompatibility", "compatibility") {
+        UI[name].Enabled := modeReady
+        ModernButtonState.Buttons[UI[name].Hwnd].style := currentMode = mode ? "primary" : "secondary"
+    }
+    UI["modeHint"].Text := IsObject(S.profile)
+        ? L("切换后需重新试用，确认语音和音量正常后生效。", "Switches take effect after you confirm voice and volume.")
+        : L("优先使用标准模式；无法正常使用时可选兼容模式。", "Start with Standard; use Compatibility if needed.")
     UI["uninstall"].Enabled := Driver.known && !Driver.serviceConflict && !S.maintenance && !S.busy && !S.held.keys.Length && !S.pendingReboot && (Driver.installed || Driver.running || Driver.partial)
     UI["notice"].Text := Text(S.notice)
     UI["language"].Enabled := !S.maintenance && !S.busy && !S.editing && !S.held.keys.Length
     if MicSetupActive()
-        for name in ["enable", "refresh", "editShortcut", "uninstall", "language"]
+        for name in ["enable", "refresh", "editShortcut", "uninstall", "language", "modeStandard", "modeCompatibility"]
             UI[name].Enabled := false
     A_IconTip := L("AirKey · 语音键", "AirKey") " · " (S.enabled ? L("已启用", "On") : L("已停止", "Off"))
-    for name in ["enable", "advanced", "help", "uninstall", "refresh", "editShortcut", "language"]
+    for name in ["enable", "advanced", "help", "uninstall", "refresh", "editShortcut", "language", "modeStandard", "modeCompatibility"]
         ModernRedraw(UI[name])
 }
 
@@ -708,7 +743,7 @@ Log(message) {
 RunSelfTest() {
     global DataDir
     status := GetDriverStatus()
-    report := "AirKey 1.3.0 self-check`r`nNo hotkeys registered; no keyboard events sent; no driver changes.`r`n"
+    report := "AirKey 1.4.0 self-check`r`nNo hotkeys registered; no keyboard events sent; no driver changes.`r`n"
     report .= "Assets SHA256 verified.`r`nDriver installed=" status.installed " running=" status.running " pending=" status.pending "`r`n"
     if status.running && !status.pending {
         native := NativeOutput(DataDir "\components\interception.dll")

@@ -1,11 +1,14 @@
 #Requires AutoHotkey v2.0 64-bit
 #SingleInstance Off
 #NoTrayIcon
+#Warn All, StdOut
 ; No hook is installed. Native sends are replaced by the in-memory mock below.
 global DataDir := A_ScriptDir
 global ConfigPath := DataDir "\settings.ini"
 global LogPath := DataDir "\activity.log"
 global UI := Map(), S := 0, Driver := 0
+; The real renderer stays inert; its new style registry reference still needs a definition.
+global ModernButtonState := {Buttons: Map()}
 global Passed := 0, Skipped := 0
 global EnableRequests := 0
 global LanguageApplyRequests := 0, UIUpdateRequests := 0

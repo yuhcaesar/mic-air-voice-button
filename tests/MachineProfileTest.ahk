@@ -9,6 +9,12 @@ path := testDir "\profile.ini"
 report := "Machine profile tests — temporary files and synthetic identifiers only.`r`n"
 lock := 0
 try {
+    Check(ValidMicMode("standard") && ValidMicMode("compatibility"), "Both explicit modes are valid")
+    for invalidMode in ["", "automatic", "STANDARD", 0, {}]
+        Check(!ValidMicMode(invalidMode), "Unknown or non-string modes are invalid")
+    Check(MicProfileMode({source: "hid"}) = "compatibility", "Learned HID profile classifies without persisted fields")
+    for standardProfile in [0, {}, {source: "key"}, {source: "registered"}, {source: "other"}, {source: {}}]
+        Check(MicProfileMode(standardProfile) = "standard", "Known keyboard and missing/unknown profiles default to standard")
     machine := ProfileDigest("TEST_MACHINE_A")
     otherMachine := ProfileDigest("TEST_MACHINE_B")
     Check(machine != otherMachine && StrLen(machine) = 64, "Synthetic machine digests")
@@ -26,12 +32,76 @@ try {
     Check(IsObject(loaded) && loaded.source = "key" && loaded.outputId = 2
         && loaded.shortcut = "RAlt+Space" && loaded.volumeVerified, "Confirmed profile round trip")
     Check(IniRead(path, "Button", "Version") = "2"
-        && IniRead(path, "Button", "VolumeVerified") = "1", "Current schema persists explicit volume confirmation")
+        && IniRead(path, "Button", "VolumeVerified") = "1"
+        && IniRead(path, "Button", "Mode") = "standard", "Version 2 preserves volume confirmation and readable mode")
     Check(IniRead(path, "UI", "Language") = "en" && IniRead(path, "Driver", "BootId") = "TEST_BOOT", "Unrelated settings preserved")
     Check(IniRead(path, "Mapping", "EnableOnLaunch") = "1"
         && IniRead(path, "Mapping", "HardwareId") = profile.outputHid, "Mapping updated in same saved profile")
     Check(!LoadMicProfile(path, otherMachine) && !LoadMicProfile(path, ""), "Copied settings rejected on another/unknown machine")
     report .= "PASS synthetic SHA256; confirmed profile round trip; copied-machine rejection; unrelated settings preserved.`r`n"
+
+    for source in ["key", "registered", "hid"] {
+        sourceProfile := profile.Clone()
+        sourceProfile.source := source
+        sourceProfile.device := source = "hid" ? "TEST_HID_DEVICE" : ""
+        expectedMode := source = "hid" ? "compatibility" : "standard"
+        oppositeMode := expectedMode = "standard" ? "compatibility" : "standard"
+        sourceProfile.mode := oppositeMode ; A draft's label cannot override source.
+        SaveMicProfile(path, sourceProfile, machine)
+        loaded := LoadMicProfile(path, machine)
+        Check(IsObject(loaded) && loaded.source = source && MicProfileMode(loaded) = expectedMode
+            && IniRead(path, "Button", "Mode") = expectedMode,
+            "Saved mode is derived from source and roundtrips for every existing input kind")
+        IniDelete(path, "Button", "Mode")
+        before := FileRead(path)
+        loaded := LoadMicProfile(path, machine)
+        Check(IsObject(loaded) && loaded.source = source && MicProfileMode(loaded) = expectedMode
+            && FileRead(path) = before, "Legacy confirmed version-2 profile loads without writing a migration")
+        for invalidMode in ["", oppositeMode, "automatic", "STANDARD"] {
+            IniWrite(invalidMode, path, "Button", "Mode")
+            before := FileRead(path)
+            Check(!LoadMicProfile(path, machine) && FileRead(path) = before,
+                "Explicit blank, conflicting or invalid mode is rejected without modifying saved bytes")
+        }
+    }
+    SaveMicProfile(path, profile, machine)
+    report .= "PASS pure mode classification; all old input sources migrate without writes; explicit conflicting/invalid modes rejected.`r`n"
+
+    compatibility := profile.Clone()
+    compatibility.source := "hid"
+    compatibility.device := "TEST_HID_DEVICE"
+    SaveMicProfile(path, compatibility, machine)
+    Check(LoadMicModePreference(path, machine) = "compatibility", "Confirmed local compatibility mode is remembered")
+    InvalidateMicProfile(path)
+    IniWrite("LCtrl+LShift+Space", path, "Mapping", "Shortcut")
+    before := FileRead(path)
+    Check(LoadMicModePreference(path, machine) = "compatibility" && !LoadMicProfile(path, machine)
+        && FileRead(path) = before, "Shortcut invalidation retains only the mode preference without enabling or rewriting the profile")
+    IniDelete(path, "Button", "Mode")
+    before := FileRead(path)
+    Check(LoadMicModePreference(path, machine) = "compatibility" && !LoadMicProfile(path, machine)
+        && FileRead(path) = before, "Missing legacy Mode preserves local preference even when unverified")
+    Check(LoadMicModePreference(path, otherMachine) = "standard"
+        && LoadMicModePreference(path, "") = "standard", "Copied or unknown machine cannot import mode preference")
+    for invalidMode in ["", "standard", "automatic", "COMPATIBILITY", "!missing-mode!"] {
+        IniWrite(invalidMode, path, "Button", "Mode")
+        before := FileRead(path)
+        Check(LoadMicModePreference(path, machine) = "standard" && FileRead(path) = before,
+            "Empty, conflicting, unknown or sentinel-like stored modes safely default without writes")
+    }
+    IniWrite("compatibility", path, "Button", "Mode")
+    for invalidSource in ["", "unknown", "HID"] {
+        IniWrite(invalidSource, path, "Button", "Source")
+        before := FileRead(path)
+        Check(LoadMicModePreference(path, machine) = "standard" && FileRead(path) = before,
+            "Unknown source cannot restore compatibility preference")
+    }
+    IniWrite("hid", path, "Button", "Source")
+    IniDelete(path, "Button", "Machine")
+    Check(LoadMicModePreference(path, machine) = "standard", "Missing stored machine cannot restore a preference")
+    Check(LoadMicModePreference(testDir "\missing.ini", machine) = "standard", "Missing settings default to standard")
+    SaveMicProfile(path, profile, machine)
+    report .= "PASS invalidated compatibility preference survives shortcut changes without becoming verified; foreign/missing machine and invalid mode/source default safely.`r`n"
 
     ; The old voice-only confirmation must not silently become volume confirmation.
     IniWrite(1, path, "Button", "Version")

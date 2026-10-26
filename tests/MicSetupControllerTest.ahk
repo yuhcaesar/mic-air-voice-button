@@ -14,7 +14,7 @@ global Report := "Mic setup controller tests — mock input/output/UI only.`r`n"
 try {
     ResetCase()
     original := FileRead(ConfigPath)
-    BeginMicSetup()
+    BeginMicSetupMode("compatibility")
     Check(S.settingUp && S.setup.stage = "learning" && S.button.learning, "Learning starts without output")
     ConfirmMicSetup()
     Check(FileRead(ConfigPath) = original && S.native.events.Length = 0, "Undetected button cannot save")
@@ -36,7 +36,7 @@ try {
 
     ResetCase()
     original := FileRead(ConfigPath)
-    BeginMicSetup()
+    BeginMicSetupMode("compatibility")
     DetectButton()
     S.setup.dialog.loseFocusOnCheck := 3 ; Initial guard, RAlt down, then Space down.
     if Trial("focus lost during shortcut", false) {
@@ -54,7 +54,7 @@ try {
 
     ResetCase()
     original := FileRead(ConfigPath)
-    BeginMicSetup()
+    BeginMicSetupMode("compatibility")
     DetectButton()
     if Trial("confirmed output") {
         Check(S.setup.stage = "confirming" && S.setup.tested && FileRead(ConfigPath) = original, "Actual trial still requires explicit confirmation")
@@ -73,7 +73,7 @@ try {
     ResetCase(true)
     original := FileRead(ConfigPath)
     oldProfile := S.profile
-    BeginMicSetup()
+    BeginMicSetupMode("compatibility")
     DetectButton()
     MicSetupVolumeIssue()
     Check(S.setup.stage = "ready" && S.button.guardActive,
@@ -93,13 +93,16 @@ try {
 
     ResetCase()
     original := FileRead(ConfigPath)
-    BeginMicSetup()
+    BeginMicSetupMode("compatibility")
     DetectButton()
     if Trial("next output") {
         NextMicOutput()
-        Check(S.setup.index = 2 && S.setup.stage = "ready" && !S.setup.tested, "No advances output and clears trial flag")
+        Check(S.setup.index = 2 && S.setup.stage = "failed" && !S.setup.tested
+            && S.setup.retryOutput && !S.button.guardActive, "No stops input and offers retry or explicit mode switch")
         ConfirmMicSetup()
         Check(FileRead(ConfigPath) = original, "No does not save and next candidate needs its own trial")
+        RetryMicSetup()
+        Check(S.setup.index = 2 && S.setup.stage = "ready", "Retry continues the next output without relearning")
         if Trial("all outputs exhausted") {
             NextMicOutput()
             Check(S.setup.stage = "failed" && FileRead(ConfigPath) = original, "Exhausted outputs show failure without saving")
@@ -113,7 +116,7 @@ try {
     oldProfile := S.profile
     original := FileRead(ConfigPath)
     S.native.devices := [S.native.devices[2], S.native.devices[1]]
-    BeginMicSetup()
+    BeginMicSetupMode("compatibility")
     dialog := S.setup.dialog
     button := S.button
     CancelMicSetup()
@@ -125,7 +128,7 @@ try {
     ResetCase(true)
     original := FileRead(ConfigPath)
     oldProfile := S.profile
-    BeginMicSetup()
+    BeginMicSetupMode("compatibility")
     dialog := S.setup.dialog
     S.button.failStop := true
     S.held.keys := [{device: 2, code: 56, stateUp: 3, name: "RAlt"}]
@@ -139,7 +142,7 @@ try {
     Pass("listener Stop exception during cancellation still cleans up and preserves paused/error state")
 
     ResetCase()
-    BeginMicSetup()
+    BeginMicSetupMode("compatibility")
     DetectButton()
     if Trial("confirmed setup cleanup failure") {
         dialog := S.setup.dialog
@@ -155,7 +158,7 @@ try {
 
     ResetCase()
     original := FileRead(ConfigPath)
-    BeginMicSetup()
+    BeginMicSetupMode("compatibility")
     MicLearningTimeout()
     Check(S.setup.stage = "failed" && !S.button.learning && !S.button.guardActive
         && FileRead(ConfigPath) = original, "Timeout stops detection/guard without saving")
@@ -167,12 +170,13 @@ try {
     ResetCase()
     S.native.failAt := 2
     original := FileRead(ConfigPath)
-    BeginMicSetup()
+    BeginMicSetupMode("compatibility")
     DetectButton()
     if Trial("send failure", false) {
         Check(S.held.keys.Length = 0 && !S.busy && !S.setup.tested, "Failed trial releases attempted keys")
         Check(S.native.Sequence() = "2:56:2,2:57:0,2:57:1,2:56:3", "Failure cleanup exact reverse key-up sequence")
-        Check(S.setup.index = 2 && S.setup.stage = "ready" && FileRead(ConfigPath) = original, "Failed send advances without saving")
+        Check(S.setup.index = 2 && S.setup.stage = "failed" && S.setup.retryOutput
+            && !S.button.guardActive && FileRead(ConfigPath) = original, "Failed send pauses with next output available and never saves")
         ConfirmMicSetup()
         Check(FileRead(ConfigPath) = original, "Failed send cannot be confirmed")
         Pass("failed sends release attempted keys, advance candidate and do not save")
@@ -183,7 +187,7 @@ try {
     S.native.failAt := 2
     S.native.failReleases := true
     original := FileRead(ConfigPath)
-    BeginMicSetup()
+    BeginMicSetupMode("compatibility")
     DetectButton()
     if Trial("persistent release failure", false) {
         Check(S.held.keys.Length > 0 && S.setup.stage = "failed" && !S.setup.dialog.canRetry,
@@ -205,7 +209,7 @@ try {
     ResetCase(true)
     original := FileRead(ConfigPath)
     oldProfile := S.profile
-    BeginMicSetup()
+    BeginMicSetupMode("compatibility")
     DetectButton()
     if Trial("save failure") {
         lock := DllCall("Kernel32\CreateFileW", "Str", ConfigPath, "UInt", 0x80000000,
@@ -223,7 +227,7 @@ try {
     ResetCase()
     S.native.devices := [{id: 2, hid: "HID\DUPLICATE"}, {id: 4, hid: "HID\DUPLICATE"}]
     original := FileRead(ConfigPath)
-    BeginMicSetup()
+    BeginMicSetupMode("compatibility")
     DetectButton()
     if Trial("duplicate topology changes") {
         ; The chosen id/HID still exists: only the surrounding topology changed.
@@ -237,7 +241,7 @@ try {
 
     ResetCase()
     original := FileRead(ConfigPath)
-    BeginMicSetup()
+    BeginMicSetupMode("compatibility")
     DetectButton()
     if Trial("connection changes") {
         S.native.devices := [{id: 7, hid: "ACPI\REPLACEMENT"}]
@@ -246,6 +250,101 @@ try {
         Pass("connection change between trial and confirmation refuses save")
     }
     CancelMicSetup(false)
+
+    for enabledBefore in [true, false] {
+        ResetCase(true)
+        S.enabled := enabledBefore
+        S.resume := enabledBefore
+        original := FileRead(ConfigPath), oldProfile := S.profile
+        BeginMicSetup()
+        Check(S.setup.mode = "standard" && S.button.preference = "standard"
+            && S.setup.dialog.mode = "standard", "Default setup follows existing standard profile")
+        Check(S.setup.priorEnabled = enabledBefore && FileRead(ConfigPath) = original,
+            "Opening setup preserves the prior enabled state and disk configuration")
+        standardListener := S.button
+        MicButtonDetected({source: "hid", device: "TEST_RECEIVER_PATH", usagePage: 12, usage: 1})
+        Check(S.setup.stage = "failed" && S.setup.mode = "standard" && !S.setup.profile
+            && !standardListener.running, "Standard mode rejects a HID result without silently switching")
+        SwitchMicSetupMode("compatibility")
+        Check(S.setup.mode = "compatibility" && S.button.preference = "compatibility"
+            && !standardListener.learning && S.profile = oldProfile && FileRead(ConfigPath) = original,
+            "Explicit compatibility switch cleans the old listener without changing saved profile")
+        compatibilityListener := S.button
+        DetectButton()
+        Check(compatibilityListener.guardActive, "Compatibility trial owns the fake guard")
+        SwitchMicSetupMode("standard")
+        Check(!compatibilityListener.guardActive && !compatibilityListener.running
+            && S.setup.mode = "standard" && S.button.preference = "standard"
+            && !S.setup.tested && !S.setup.profile, "Switch stops compatibility guard before learning standard mode")
+        CancelMicSetup()
+        Check(S.profile = oldProfile && FileRead(ConfigPath) = original
+            && EnableRequests = (enabledBefore ? 1 : 0) && S.enabled = enabledBefore,
+            "Cancelled mode changes restore exactly the previous enabled or paused state")
+    }
+    Pass("explicit mode changes preserve old profile, stop guard and restore prior enabled or paused state")
+
+    ResetCase()
+    original := FileRead(ConfigPath)
+    BeginMicSetupMode("invalid")
+    Check(!S.settingUp && !S.button && FileRead(ConfigPath) = original, "Invalid mode does not start or persist anything")
+    BeginMicSetup()
+    Check(S.setup.mode = "standard" && S.button.preference = "standard", "Fresh setup defaults to standard mode")
+    MicLearningTimeout()
+    Check(S.setup.mode = "standard" && S.setup.stage = "failed" && S.setup.dialog.canRetry,
+        "Standard timeout offers failure actions without an automatic compatibility fallback")
+    RetryMicSetup()
+    Check(S.setup.mode = "standard" && S.button.preference = "standard", "Retry keeps the explicitly selected input mode")
+    MicButtonDetected({source: "registered", device: "", usagePage: 12, usage: 1})
+    Check(S.setup.stage = "ready" && !S.button.guardActive, "Standard registered input can start its trial without a HID guard")
+    if Trial("standard mode confirmed output") {
+        ConfirmMicSetup()
+        Check(MicProfileMode(LoadMicProfile(ConfigPath, S.machine)) = "standard",
+            "Actual standard trial plus joint confirmation saves standard input")
+    } else
+        CancelMicSetup(false)
+    Pass("standard timeout/retry stays standard and only a confirmed actual trial saves it")
+
+    ResetCase()
+    original := FileRead(ConfigPath)
+    BeginMicSetupMode("compatibility")
+    MicButtonDetected({source: "key", device: "", usagePage: 12, usage: 1})
+    Check(S.setup.stage = "failed" && !S.setup.profile && S.setup.mode = "compatibility"
+        && FileRead(ConfigPath) = original, "Compatibility mode rejects key input without switching or saving")
+    RetryMicSetup()
+    DetectButton()
+    oldListener := S.button
+    oldListener.failStop := true
+    SwitchMicSetupMode("standard")
+    Check(S.setup.mode = "compatibility" && S.button = oldListener && S.setup.stage = "failed"
+        && !S.setup.dialog.canRetry && !S.setup.retryOutput && FileRead(ConfigPath) = original,
+        "Failed listener cleanup blocks mode change and any new learner")
+    oldListener.failStop := false
+    CancelMicSetup(false)
+    Pass("cross-mode source rejection and cleanup failure cannot start a replacement listener or save")
+
+    ResetCase(true)
+    S.profile.source := "hid", S.profile.device := "TEST_RECEIVER_PATH"
+    SaveMicProfile(ConfigPath, S.profile, S.machine)
+    BeginMicSetup()
+    Check(S.setup.mode = "compatibility" && S.button.preference = "compatibility", "Existing HID profile opens compatibility setup")
+    CancelMicSetup()
+    Pass("existing compatibility profile remains the default for setup")
+
+    S.enabled := false
+    S.profile := 0
+    IniWrite(0, ConfigPath, "Button", "Verified")
+    original := FileRead(ConfigPath)
+    BeginMicSetup()
+    Check(S.setup.mode = "compatibility" && !S.enabled && !S.profile,
+        "Invalidated same-machine profile retains only compatibility preference")
+    CancelMicSetup()
+    Check(FileRead(ConfigPath) = original && !S.enabled && !S.profile,
+        "Cancelling preference-only setup never re-verifies or enables old settings")
+    S.machine := ProfileDigest("DIFFERENT_TEST_MACHINE_ONLY")
+    BeginMicSetup()
+    Check(S.setup.mode = "standard", "Copied-machine preferences cannot override standard default")
+    CancelMicSetup(false)
+    Pass("same-machine invalidated preference survives shortcut edits without enabling or following a copied machine")
 
     CheckSafeLogs()
     Report .= "SKIP cases=" Skipped "`r`n"
@@ -307,7 +406,11 @@ CheckSafeLogs() {
             && (!IsObject(S) || !InStr(line, S.machine)), "Diagnostic logs omit machine/device identifiers and paths")
 }
 
-ShowMicSetup(*) => MockDialog()
+ShowMicSetup(owner, cancel, retry, yes, no, volume, switchMode, mode) {
+    dialog := MockDialog()
+    dialog.mode := mode
+    return dialog
+}
 DriverReady() => true
 UpdateUI(*) {
 }
@@ -321,8 +424,9 @@ ReleaseHeldKeys() {
     ReleaseConfiguredKeys(S.native, S.held)
 }
 EnableMapping(*) {
-    global EnableRequests
+    global EnableRequests, S
     EnableRequests++
+    S.enabled := true
 }
 Log(message) {
     global Logs
@@ -340,6 +444,9 @@ Pass(label) {
 class MockDialog {
     focused := true, focusRequests := 0, closed := false, canRetry := true
     focusChecks := 0, loseFocusOnCheck := 0
+    SetMode(mode) {
+        this.mode := mode
+    }
     Listening(*) {
     }
     Ready(*) {
@@ -370,12 +477,13 @@ class MicButtonInput {
     __New(*) {
         ; Production may supply a DLL path; this fake never opens it.
     }
-    Learn(*) {
+    Learn(callback, preference := "standard") {
         this.learning := true
+        this.preference := preference
     }
-    Start(*) {
+    Start(profile, *) {
         this.running := true
-        this.guardActive := true
+        this.guardActive := profile.source = "hid"
     }
     Stop() {
         this.stops++

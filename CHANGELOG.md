@@ -1,5 +1,25 @@
 # 更新记录
 
+## 1.4.0 — 自选标准与兼容模式 / Choose Standard or Compatibility mode
+
+中文：
+
+- 设置新增“标准模式（推荐）”和“兼容模式”。首次设置默认标准模式；兼容模式使用麦克风媒体按钮信号并同时启用音量拦截。
+- 标准模式不再自动转入兼容方式。无法完成设置时，向导提供明确的模式切换入口；兼容模式也可切回标准模式。
+- 切换模式必须重新识别按钮、实际试用，并确认“语音启动、音量不变、音量条不弹出”后才保存并启用。取消会保留原配置，恢复切换前的启用或暂停状态。
+- 保留本机仍有效、已通过语音和音量确认的配置；原来的媒体信号配置继续使用兼容模式，不强制切换。每台电脑的验证结果独立保存。
+- 区分模式选择与该模式下的连接试用，不显示设备编号。修改快捷键、换机或原连接失效后仍需重新验证。
+- 中英文界面和说明同步更新。兼容模式仍会拦截同一通道中其他来源的音量＋；范围限制、驱动安装权限与重启要求保持不变。不承诺所有电脑兼容，也不将当前试用成功视为历史故障原因已查明。
+
+English:
+
+- Added **Standard mode (recommended)** and **Compatibility mode** in Settings. First-time setup defaults to Standard. Compatibility receives the microphone's media-button signal and enables volume blocking together.
+- Standard mode no longer changes to the compatibility method automatically. The wizard offers an explicit mode change when setup cannot finish; users can also switch back to Standard.
+- Changing mode requires button detection, a real trial and confirmation that voice starts, volume stays unchanged and no volume overlay appears before saving and enabling it. Cancelling retains the previous configuration and restores its enabled or paused state.
+- Retains valid local configurations already verified for both voice and volume. Existing media-input configurations remain in Compatibility mode. Verification stays separate for each computer.
+- Distinguishes mode selection from connection trials within that mode, without showing device numbers. Shortcut changes, a new computer or an invalid previous connection still require verification.
+- Updated both languages and user guides. Compatibility mode still blocks Volume Up from other sources reaching the same channel. Scope limitations, administrator permission and restart requirements remain. Compatibility with every computer is not guaranteed, and a successful current trial does not prove a historical failure's cause.
+
 ## 1.3.0 — 启动语音，保持音量 / Voice input without changing volume
 
 中文：

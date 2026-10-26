@@ -12,7 +12,8 @@ try {
         ["Profile selection and validation", TestProfiles],
         ["Capability and usage buffers", TestBuffers],
         ["Raw registration structure and removal flags", TestRegistrationBuffers],
-        ["Learning fallback and keyboard-only rejection", TestLearning],
+        ["Learning modes and keyboard-only rejection", TestLearning],
+        ["Explicit mode isolation and cancellation", TestModeIsolation],
         ["Registered learning priority and observation window", TestRegisteredLearning],
         ["Registered runtime and retryable cleanup", TestRegisteredRuntime],
         ["Keyboard press edges and suppression", TestKeyboardRuntime],
@@ -51,12 +52,15 @@ HidProfile(device := "test-hid-a") {
 
 TestProfiles() {
     profile := MicButtonInput.ChooseLearnProfile(true, "test-hid-a", true)
-    Check(profile.source = "registered" && profile.device = "", "Registered input takes priority over hook and HID")
+    Check(profile.source = "registered" && profile.device = "", "Standard mode prioritizes registered input")
     profile := MicButtonInput.ChooseLearnProfile(true, "test-hid-a")
-    Check(profile.source = "key" && profile.device = "", "Hook takes priority over HID learning")
+    Check(profile.source = "key" && profile.device = "", "Standard mode permits a proven hook")
     Check(profile.usagePage = 12 && profile.usage = 1, "Learned key profile uses expected usage")
-    profile := MicButtonInput.ChooseLearnProfile(false, "test-hid-a")
-    Check(profile.source = "hid" && profile.device = "test-hid-a", "HID fallback preserves device")
+    Check(!MicButtonInput.ChooseLearnProfile(false, "test-hid-a"), "Standard mode never falls back to HID")
+    profile := MicButtonInput.ChooseLearnProfile(true, "test-hid-a", true, "compatibility")
+    Check(profile.source = "hid" && profile.device = "test-hid-a", "Compatibility mode only accepts HID, even with keyboard evidence")
+    Check(!MicButtonInput.ChooseLearnProfile(true, "", true, "compatibility"),
+        "Compatibility mode cannot fall back to registered or hook input")
     Check(!MicButtonInput.ChooseLearnProfile(false, ""), "No observation is not a learned profile")
     profile := MicButtonInput.NormalizeProfile(KeyProfile("unused-device"))
     Check(profile.source = "key" && profile.device = "", "Normalize clears key device")
@@ -148,12 +152,12 @@ TestLearning() {
     input.Close()
 
     input := FakeButtonInput(), sink := InputRecorder(input)
-    input.Learn(ObjBindMethod(sink, "Detected"))
+    input.Learn(ObjBindMethod(sink, "Detected"), "compatibility")
     input.FeedHid("test-hid-a", 1, true)
     input.FeedHid("test-hid-a", 1, false)
     input.FinishLearning()
     Check(sink.profiles.Length = 1 && sink.profiles[1].source = "hid"
-        && sink.profiles[1].device = "test-hid-a", "Learn a HID-only Volume Up source")
+        && sink.profiles[1].device = "test-hid-a", "Compatibility learns a HID-only Volume Up source")
     Check(sink.detectedStopped, "Stop registrations before reporting learned profile")
     input.Close()
 
@@ -163,19 +167,85 @@ TestLearning() {
     input.FeedHook(true)
     input.FeedHook(false)
     input.FinishLearning()
-    Check(sink.profiles.Length = 1 && sink.profiles[1].source = "key", "Hook wins when both paths observe the press")
+    Check(sink.profiles.Length = 1 && sink.profiles[1].source = "key", "Standard learns the hook and ignores HID")
     Check(sink.detectedStopped, "Hook learning stops before callback")
     input.Close()
+}
+
+TestModeIsolation() {
+    global testDir
+    input := FakeButtonInput(), sink := InputRecorder(input)
+    input.Learn(ObjBindMethod(sink, "Detected"), "compatibility")
+    Check(input.testRaw && !input.testKeyboard && !input.testHooks && !input.testRegistered
+        && !input.registeredMonitored && !input.testGuard && !input.testGuardOwned,
+        "Compatibility learning enables consumer Raw Input only, without keyboard interception or guard")
+    Check(!InStr(input.OrderText(), "hook:on") && !InStr(input.OrderText(), "register:on"),
+        "Compatibility never attempts keyboard hook or hotkey registration")
+    input.FeedHook(true)
+    input.FeedRegistered()
+    input.FeedKeyboard(0xAF, true)
+    Check(!input.sawHook && !input.sawRegistered && !input.hookHeld && !input.rawKeyHeld && !input.learnPending,
+        "Stale keyboard callbacks cannot influence compatibility learning")
+    input.FeedHid("test-hid-a", 1, true)
+    input.FeedHid("test-hid-b", 1, true)
+    input.FinishLearning()
+    Check(sink.profiles.Length = 0, "Ambiguous compatibility devices are not silently selected")
+    input.Close()
+
+    input := FakeButtonInput(), sink := InputRecorder(input)
+    input.Learn(ObjBindMethod(sink, "Detected"), "standard")
+    input.FeedHid("test-hid-a", 1, true)
+    input.FinishLearning()
+    Check(!input.learnPending && input.learnDevices.Count = 0 && input.hidStates.Count = 0
+        && sink.profiles.Length = 0, "Standard does not retain or learn HID input")
+    input.Close()
+
+    for invalid in ["", "automatic", "STANDARD", 0, {}] {
+        input := FakeButtonInput()
+        rejected := false
+        try input.Learn((*) => 0, invalid)
+        catch
+            rejected := true
+        Check(rejected && input.testOrder.Length = 0 && input.Stopped(),
+            "Invalid mode is rejected before touching input resources")
+        rejected := false
+        try MicButtonInput.ChooseLearnProfile(true, "test-hid-a", true, invalid)
+        catch
+            rejected := true
+        Check(rejected, "Invalid pure selection mode cannot choose a fallback")
+        input.Close()
+    }
+
+    ; A save callback must not run after cancellation, even if its old timer fires.
+    path := testDir "\cancel-mode.ini"
+    IniWrite("original", path, "Button", "Source")
+    before := FileRead(path)
+    for preference in ["standard", "compatibility"] {
+        input := FakeButtonInput()
+        input.Learn((profile) => IniWrite(profile.source, path, "Button", "Source"), preference)
+        if preference = "compatibility"
+            input.FeedHid("test-hid-a", 1, true)
+        else
+            input.FeedHook(true)
+        queued := input.PendingCallbacks()
+        Check(queued.Length = 1, "Learning has a completion queued before cancellation")
+        input.Stop()
+        for callback in queued
+            callback.Call()
+        input.FinishLearning()
+        Check(input.Stopped() && FileRead(path) = before, "Cancelling either mode preserves existing saved bytes")
+        input.Close()
+    }
 }
 
 TestRegisteredLearning() {
     input := FakeButtonInput(), sink := InputRecorder(input)
     input.Learn(ObjBindMethod(sink, "Detected"))
     Check(!input.learnPending && !input.sawRegistered, "Successful registration alone does not learn a key")
-    input.FeedHid("test-hid-a", 1, true)
+    input.FeedHook(true)
     input.testNow += 200
     input._FinishLearn()
-    Check(sink.profiles.Length = 0 && input.mode = "learn", "HID cannot finish at the former 200 ms deadline")
+    Check(sink.profiles.Length = 0 && input.mode = "learn", "Standard cannot finish at the former 200 ms deadline")
     Check(input.testTimers[input.learnTimer] = -800, "Early completion waits for the remaining observation interval")
     input.FeedHook(true)
     input._RegisteredInput(MicButtonInput.HotkeyId + 1, 0xAF << 16, 0x312, A_ScriptHwnd)
@@ -211,7 +281,7 @@ TestRegisteredLearning() {
     input.Learn(ObjBindMethod(sink, "Detected"))
     input.FeedHid("test-hid-a", 1, true)
     input.FinishLearning()
-    Check(sink.profiles.Length = 1 && sink.profiles[1].source = "hid", "A registration conflict still permits proven HID input")
+    Check(sink.profiles.Length = 0 && input.mode = "learn", "Registration failure cannot switch standard mode to HID")
     input.Close()
 }
 

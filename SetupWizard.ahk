@@ -4,12 +4,12 @@
 ; only Close destroys the dialog. The Edit's contents are never read or saved.
 #Include Localization.ahk
 
-ShowMicSetup(owner, onCancel, onRetry, onYes, onNo, onVolumeIssue := 0) {
+ShowMicSetup(owner, onCancel, onRetry, onYes, onNo, onVolumeIssue := 0, onSwitchMode := 0, initialMode := "standard") {
     if IsObject(MicSetupStore.Active) && !MicSetupStore.Active.closed {
         MicSetupStore.Active.window.Show()
         return MicSetupStore.Active
     }
-    return MicSetupDialog(owner, onCancel, onRetry, onYes, onNo, true, onVolumeIssue)
+    return MicSetupDialog(owner, onCancel, onRetry, onYes, onNo, true, onVolumeIssue, onSwitchMode, initialMode)
 }
 
 class MicSetupStore {
@@ -17,13 +17,14 @@ class MicSetupStore {
 }
 
 class MicSetupDialog {
-    __New(owner, onCancel, onRetry, onYes, onNo, showWindow := true, onVolumeIssue := 0) {
+    __New(owner, onCancel, onRetry, onYes, onNo, showWindow := true, onVolumeIssue := 0, onSwitchMode := 0, initialMode := "standard") {
         this.owner := owner
         this.onCancel := onCancel
         this.onRetry := onRetry
         this.onYes := onYes
         this.onNo := onNo
         this.onVolumeIssue := IsObject(onVolumeIssue) ? onVolumeIssue : onCancel
+        this.onSwitchMode := onSwitchMode
         this.window := 0
         this.closed := false
         this.ownerDisabled := false
@@ -41,6 +42,7 @@ class MicSetupDialog {
         MicSetupStore.Active := this
         try {
             this.Build()
+            this.SetMode(initialMode)
             this.Listening()
             owner.Opt("+Disabled")
             this.ownerDisabled := true
@@ -83,11 +85,14 @@ class MicSetupDialog {
             this.Say("两项正常，完成设置", "Both work, finish setup"), "primary")
         this.yesButton.OnEvent("Click", ObjBindMethod(this, "ChooseYes"))
         this.noButton := ModernButton(g, "x" (44 + halfWidth) " y" actionY " w" halfWidth " h44",
-            this.Say("豆包未启动，换一种方式", "Voice failed, try another"), "secondary")
+            this.Say("豆包未启动", "Voice did not start"), "secondary")
         this.noButton.OnEvent("Click", ObjBindMethod(this, "ChooseNo"))
         this.retryButton := ModernButton(g, "x32 y" actionY " w" width " h44",
             this.Say("重试", "Try again"), "primary")
         this.retryButton.OnEvent("Click", ObjBindMethod(this, "Retry"))
+        this.switchModeButton := ModernButton(g, "x" (44 + halfWidth) " y" actionY " w" halfWidth " h44",
+            "", "secondary")
+        this.switchModeButton.OnEvent("Click", ObjBindMethod(this, "SwitchMode"))
         g.SetFont("s10 norm c71827B")
         this.cancelButton := ModernButton(g, "x32"
             " y" (438 + lowerOffset) " w112 h30", this.Say("取消", "Cancel"), "ghost")
@@ -107,9 +112,11 @@ class MicSetupDialog {
         this.attempt := 0
         this.total := 0
         this.canRetry := false
-        this.stepLabel.Text := this.Say("首次设置 · 1 / 3", "SETUP · 1 / 3")
+        this.stepLabel.Text := this.ModeName() " · 1 / 3"
         this.heading.Text := this.Say("识别 Mic Air 按钮", "Find your Mic Air button")
         this.description.Text := this.Say("松开键盘按键，再按一下 Mic Air 按钮。`n识别这一步可能调整一次音量。", "Release keyboard keys, then press Mic Air once.`nThis detection step may change volume once.")
+        if this.mode = "compatibility"
+            this.description.Text .= this.Say("`n此模式直接识别接收器的按钮消息。", "`nThis mode reads the receiver's button messages.")
         this.status.Text := this.Say("● 正在检测按钮…", "● Listening for your button…")
         this.Refresh()
     }
@@ -122,11 +129,11 @@ class MicSetupDialog {
         this.attempt := attempt
         this.total := total
         this.canRetry := false
-        this.stepLabel.Text := this.Say("首次设置 · 2 / 3", "SETUP · 2 / 3")
+        this.stepLabel.Text := this.ModeName() " · 2 / 3"
         this.heading.Text := this.Say("试着启动豆包语音", "Try Doubao voice input")
         this.description.Text := this.Say("点击下方输入框，再按一下 Mic Air 按钮。",
             "Click the box below, then press your Mic Air button once.")
-        this.status.Text := this.Say("● 已识别按钮 · 方式 {1} / {2}", "● Button found · Option {1} of {2}", attempt, total)
+        this.status.Text := this.Say("● 已识别按钮 · 尝试 {1} / {2}", "● Button found · Attempt {1} of {2}", attempt, total)
         this.Refresh()
         this.FocusInput()
     }
@@ -138,11 +145,11 @@ class MicSetupDialog {
         this.attempt := attempt
         this.total := total
         this.canRetry := false
-        this.stepLabel.Text := this.Say("首次设置 · 3 / 3", "SETUP · 3 / 3")
+        this.stepLabel.Text := this.ModeName() " · 3 / 3"
         this.heading.Text := this.Say("语音和音量都正常吗？", "Voice works, volume unchanged?")
         this.description.Text := this.Say("请确认豆包语音已启动，而且系统音量不变、音量条没有弹出。两项都正常再完成设置。",
             "Confirm that Doubao started, volume stayed unchanged and no volume overlay appeared. Finish only when both work.")
-        this.status.Text := this.Say("方式 {1} / {2}", "Option {1} of {2}", attempt, total)
+        this.status.Text := this.Say("尝试 {1} / {2}", "Attempt {1} of {2}", attempt, total)
         ; Keep the same Edit and leave focus alone; Doubao may own a popup now.
         this.Refresh()
     }
@@ -152,7 +159,7 @@ class MicSetupDialog {
             return
         this.stage := "failure"
         this.canRetry := !!canRetry
-        this.stepLabel.Text := this.Say("首次设置", "SETUP")
+        this.stepLabel.Text := this.ModeName()
         this.heading.Text := this.Say("还差一步", "One more step")
         this.description.Text := this.Render(message)
         this.status.Text := ""
@@ -166,10 +173,28 @@ class MicSetupDialog {
         this.Refresh()
     }
 
+    SetMode(mode) {
+        if !(mode = "standard" || mode = "compatibility")
+            throw ValueError(this.Say("未知的按钮模式。", "Unknown button mode."))
+        if this.closed
+            return
+        this.mode := mode
+        this.switchModeButton.Text := mode = "standard"
+            ? this.Say("改用兼容模式", "Use compatibility mode")
+            : this.Say("改用标准模式", "Use standard mode")
+        step := this.stage = "listening" ? 1 : this.stage = "ready" ? 2 : this.stage = "waiting" ? 3 : 0
+        this.stepLabel.Text := this.ModeName() (step ? " · " step " / 3" : "")
+        ModernRedraw(this.switchModeButton)
+    }
+
+    ModeName() => this.mode = "compatibility"
+        ? this.Say("兼容模式", "Compatibility mode") : this.Say("标准模式", "Standard mode")
+
     Refresh() {
         if this.closed
             return
         showInput := this.stage = "ready" || this.stage = "waiting"
+        showSwitch := this.stage = "failure" && this.canRetry && IsObject(this.onSwitchMode)
         this.description.Move(, , , this.stage = "failure" ? 172 : 60)
         this.status.Visible := this.stage != "failure"
         this.inputLabel.Visible := showInput
@@ -181,15 +206,18 @@ class MicSetupDialog {
         this.noButton.Visible := this.stage = "waiting"
         this.volumeIssueButton.Visible := this.stage = "waiting"
         this.retryButton.Visible := this.stage = "failure" && this.canRetry
+        this.switchModeButton.Visible := showSwitch
+        this.retryButton.Move(, , showSwitch ? (this.dialogWidth - 76) // 2 : this.dialogWidth - 64)
         this.yesButton.Enabled := !this.isBusy && this.stage = "waiting"
         this.noButton.Enabled := !this.isBusy && this.stage = "waiting"
         this.volumeIssueButton.Enabled := !this.isBusy && this.stage = "waiting"
         this.retryButton.Enabled := !this.isBusy && this.stage = "failure" && this.canRetry
+        this.switchModeButton.Enabled := !this.isBusy && showSwitch && !this.cancelRequested
         this.cancelButton.Enabled := !this.isBusy && !this.cancelRequested
         this.hint.Visible := showInput
         this.hint.Text := this.Say("音量＋已接管；调音量请用系统滑块。此处输入不会保存。", "Volume Up is remapped; use the system slider to adjust volume. This input is not saved.")
         this.hint.SetFont("c71827B")
-        for button in [this.yesButton, this.noButton, this.volumeIssueButton, this.retryButton, this.cancelButton]
+        for button in [this.yesButton, this.noButton, this.volumeIssueButton, this.retryButton, this.switchModeButton, this.cancelButton]
             ModernRedraw(button)
     }
 
@@ -227,6 +255,11 @@ class MicSetupDialog {
             this.Invoke(this.onRetry)
     }
 
+    SwitchMode(*) {
+        if this.stage = "failure" && this.canRetry && !this.cancelRequested && IsObject(this.onSwitchMode)
+            this.Invoke(this.onSwitchMode, this.mode = "standard" ? "compatibility" : "standard")
+    }
+
     Cancel(*) {
         if this.closed || this.isBusy || this.cancelRequested || this.dispatching
             return true
@@ -241,11 +274,11 @@ class MicSetupDialog {
         return true
     }
 
-    Invoke(callback) {
+    Invoke(callback, args*) {
         if this.closed || this.isBusy || this.dispatching
             return
         this.dispatching := true
-        try callback.Call()
+        try callback.Call(args*)
         finally this.dispatching := false
     }
 

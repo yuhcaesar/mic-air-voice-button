@@ -16,28 +16,37 @@ try {
     buttonsBefore := ModernButtonState.Buttons.Count
     for language in ["zh", "en"] {
         AppLanguage.Current := language
-        counts := {cancel: 0, retry: 0, yes: 0, no: 0, volume: 0}
+        counts := {cancel: 0, retry: 0, yes: 0, no: 0, volume: 0, switches: 0, requestedMode: ""}
         ownerWindow := Gui(, "Hidden setup test owner")
         ownerWindow.Show("Hide w100 h80")
         owner := SetupTestOwner(ownerWindow)
         dialog := MicSetupDialog(owner, (*) => counts.cancel++, (*) => counts.retry++,
-            (*) => counts.yes++, (*) => counts.no++, false, (*) => counts.volume++)
+            (*) => counts.yes++, (*) => counts.no++, false, (*) => counts.volume++,
+            (mode) => RecordModeSwitch(counts, mode))
         Check(MicSetupStore.Active = dialog && !dialog.closed, "Active dialog is tracked")
         Check(owner.disables = 1 && owner.enables = 0, "Owner disabled exactly once")
         Check(!DllCall("User32\IsWindowEnabled", "Ptr", owner.Hwnd, "Int"), "Native owner is disabled")
         Check(!DllCall("User32\IsWindowVisible", "Ptr", dialog.window.Hwnd, "Int"), "Dialog stays hidden")
         Check(DllCall("User32\GetForegroundWindow", "Ptr") = foreground, "Hidden construction does not activate a window")
         Check(dialog.heading.Text = (language = "en" ? "Find your Mic Air button" : "识别 Mic Air 按钮"), "Listening title")
+        Check(dialog.mode = "standard" && InStr(dialog.stepLabel.Text, language = "en" ? "Standard mode" : "标准模式"),
+            "Default listening stage names standard mode")
+        Check(!ControlIsShown(dialog.switchModeButton), "Listening cannot silently offer or apply a fallback")
+        dialog.SwitchMode()
+        Check(counts.switches = 0, "Switch callback is only available from a failure")
         Check(!ControlIsShown(dialog.input) && !ControlIsShown(dialog.yesButton), "Listening hides trial controls")
         Check(!ControlIsShown(dialog.volumeIssueButton), "Listening hides volume-result action")
         dialog.VolumeIssue()
         Check(counts.volume = 0, "Listening cannot report a trial result")
         Check(!dialog.InputFocused() && !dialog.FocusInput(), "Hidden listening window cannot claim input focus")
 
-        dialog.Ready("hid", 1, 3)
+        dialog.Ready("registered", 1, 3)
         Check(dialog.heading.Text = (language = "en" ? "Try Doubao voice input" : "试着启动豆包语音"), "Ready title")
         Check(Type(dialog.input) = "Gui.Edit" && ControlIsShown(dialog.input), "Ready exposes a real Edit")
         Check(!(ControlStyle(dialog.input) & 0x800), "The trial Edit is not read-only")
+        Check(InStr(dialog.status.Text, language = "en" ? "Attempt 1 of 3" : "尝试 1 / 3")
+            && InStr(dialog.stepLabel.Text, language = "en" ? "Standard mode" : "标准模式"),
+            "Output attempt count is distinct from the selected input mode")
         Check(ControlIsShown(dialog.hint) && InStr(dialog.hint.Text, language = "en" ? "slider" : "滑块"), "Trial explains how to adjust volume while remapped")
         Check(!ControlIsShown(dialog.yesButton) && !ControlIsShown(dialog.retryButton)
             && !ControlIsShown(dialog.volumeIssueButton), "Ready has no premature answer or retry action")
@@ -49,6 +58,7 @@ try {
         AppLanguage.Current := language = "en" ? "zh" : "en"
         dialog.Waiting(1, 3)
         Check(dialog.heading.Text = (language = "en" ? "Voice works, volume unchanged?" : "语音和音量都正常吗？"), "Joint-result question retains opening language")
+        Check(InStr(dialog.stepLabel.Text, language = "en" ? "Standard mode" : "标准模式"), "Waiting retains the selected mode and opening language")
         Check(InStr(dialog.description.Text, language = "en" ? "Doubao started" : "豆包语音已启动")
             && InStr(dialog.description.Text, language = "en" ? "volume stayed unchanged" : "系统音量不变")
             && InStr(dialog.description.Text, language = "en" ? "no volume overlay" : "音量条没有弹出"),
@@ -63,7 +73,7 @@ try {
         Check(dialog.input.Enabled, "Busy keeps the IME target editable")
         Check(!dialog.yesButton.Enabled && !dialog.noButton.Enabled
             && !dialog.volumeIssueButton.Enabled && !dialog.retryButton.Enabled
-            && !dialog.cancelButton.Enabled, "Busy disables every action button")
+            && !dialog.switchModeButton.Enabled && !dialog.cancelButton.Enabled, "Busy disables every action button")
         dialog.ChooseYes()
         dialog.ChooseNo()
         dialog.VolumeIssue()
@@ -80,18 +90,46 @@ try {
         dialog.Failure(N("请重试：{1}", "Please retry: {1}", N("接收器未连接", "Receiver disconnected")))
         Check(dialog.description.Text = (language = "en" ? "Please retry: Receiver disconnected" : "请重试：接收器未连接"), "Nested failure text retains opening language")
         Check(!ControlIsShown(dialog.input) && ControlIsShown(dialog.retryButton), "Failure offers retry and hides the trial field")
+        Check(ControlIsShown(dialog.switchModeButton)
+            && dialog.switchModeButton.Text = (language = "en" ? "Use compatibility mode" : "改用兼容模式"),
+            "Standard failure offers an explicit compatibility action")
+        dialog.retryButton.GetPos(&retryX, &retryY, &retryWidth, &retryHeight)
+        dialog.switchModeButton.GetPos(&switchX, &switchY, &switchWidth, &switchHeight)
+        Check(retryX + retryWidth < switchX && retryY = switchY
+            && switchX + switchWidth <= dialog.dialogWidth - 32, "Retry and mode switch share a row without overlap")
         Check(!ControlIsShown(dialog.hint) && !ControlIsShown(dialog.volumeIssueButton),
             "Failure no longer claims remapping is active or offers stale trial results")
         dialog.VolumeIssue()
         Check(counts.volume = 1, "Failure cannot repeat the prior volume-result callback")
         dialog.Retry()
         Check(counts.retry = 1, "Retry callback runs once")
+        dialog.Busy(true)
+        dialog.SwitchMode()
+        Check(!dialog.switchModeButton.Enabled && counts.switches = 0, "Busy failure cannot switch mode")
+        dialog.Busy(false)
+        dialog.SwitchMode()
+        Check(counts.switches = 1 && counts.requestedMode = "compatibility" && dialog.mode = "standard",
+            "Click requests compatibility; only the controller may apply it after cleanup")
+        dialog.SetMode("compatibility")
+        Check(InStr(dialog.stepLabel.Text, language = "en" ? "Compatibility mode" : "兼容模式")
+            && dialog.switchModeButton.Text = (language = "en" ? "Use standard mode" : "改用标准模式"),
+            "Applied mode and opposite action retain the opening language")
+        dialog.SwitchMode()
+        Check(counts.switches = 2 && counts.requestedMode = "standard", "Compatibility failure offers explicit standard mode")
         dialog.Failure(N("请稍后重试。", "Please try again later."), false)
         dialog.Retry()
-        Check(!ControlIsShown(dialog.retryButton) && counts.retry = 1, "Nonretryable failure cannot retry")
+        dialog.SwitchMode()
+        Check(!ControlIsShown(dialog.retryButton) && !ControlIsShown(dialog.switchModeButton)
+            && counts.retry = 1 && counts.switches = 2, "Unsafe cleanup disables both retry and mode switch")
 
         dialog.Listening()
         Check(!ControlIsShown(dialog.hint) && dialog.source = "", "New detection clears the previous source state")
+        Check(InStr(dialog.stepLabel.Text, language = "en" ? "Compatibility mode" : "兼容模式")
+            && InStr(dialog.description.Text, language = "en" ? "receiver" : "接收器"), "Compatibility listening includes a short receiver explanation")
+        dialog.Ready("hid", 1, 3)
+        dialog.Waiting(1, 3)
+        Check(InStr(dialog.stepLabel.Text, language = "en" ? "Compatibility mode" : "兼容模式"), "Compatibility trial and confirmation keep the mode visible")
+        dialog.SetMode("standard")
         dialog.Ready("registered", 2, 3)
         Check(InStr(dialog.hint.Text, language = "en" ? "slider" : "滑块"), "Registered input also explains remapped volume behavior")
         Check(dialog.input.Value = "TEST_FIXTURE_ONLY", "Stage changes never clear or replace trial input")
@@ -108,6 +146,7 @@ try {
         ownerWindow.Destroy()
         ownerWindow := 0
         report .= "PASS " language ": joint voice/volume confirmation, distinct failure actions, editable field, fixed language, busy guards, idempotent cleanup and no foreground activation.`r`n"
+        report .= "PASS " language ": explicit standard/compatibility actions, mode labels, separate attempt count, no overlapping buttons and cleanup/busy switch guards.`r`n"
     }
     FileOpen(testDir "\report.txt", "w", "UTF-8").Write(report)
     ExitApp(0)
@@ -124,6 +163,11 @@ try {
 Check(condition, message) {
     if !condition
         throw Error(message)
+}
+
+RecordModeSwitch(counts, mode) {
+    counts.switches++
+    counts.requestedMode := mode
 }
 
 ControlStyle(control) {

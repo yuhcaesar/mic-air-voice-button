@@ -1,4 +1,4 @@
-AirKey v1.3.0
+AirKey v1.4.0
 English window title: AirKey — Insta360 Mic Air
 中文：README.txt
 
@@ -15,14 +15,16 @@ First use
 3. After installation succeeds, save your work, restart Windows manually and reopen the EXE.
    The button setup wizard opens automatically when the driver is ready.
 4. In Doubao IME, set the hands-free voice-input shortcut (免按模式) to Right Alt + Space.
-5. Press the Mic Air button once so AirKey can detect it.
+5. First-time setup uses Standard mode (recommended). Press the Mic Air button once so AirKey can detect it.
 6. Click the wizard's input box, then press the Mic Air button again to try starting Doubao voice input.
 7. If it starts, volume stays unchanged and no volume overlay appears, click Both work, finish setup. Only then is this computer's configuration saved and enabled.
    Otherwise, click Voice failed, try another, then try the button again in the input box.
-   AirKey tries the available local connections in turn; you do not need to choose a device number.
+   AirKey tries the available local connections within the current mode; you do not need to choose a device number, and the mode does not change automatically.
+If Standard mode cannot complete setup, choose Switch to Compatibility in the wizard, then detect and test the button again.
+You can also switch back to Standard mode. Changing mode always needs your explicit choice.
 If the required driver is already installed and loaded, skip reinstallation and complete the wizard.
 Setup counts as successful only after a real button event, a trial and your confirmation that voice input started without changing volume or showing the volume overlay.
-Choose Volume still changes if volume changes; that result will not be saved. Initial detection may change volume once; the later trial activates the guard.
+Choose Volume still changes if volume changes; that result will not be saved. Initial detection may change volume once; Compatibility mode enables the guard for the later trial.
 AirKey does not automatically detect whether Doubao has started recording or save the contents of the trial input box.
 After cancelling, click Set Up Voice Button to start again.
 The main window illustrates “Mic Air button → Doubao IME” using the project microphone illustration
@@ -38,7 +40,8 @@ The wizard keeps the language it had when opened; close it before switching.
 User Guide opens the file for the current language. Windows permission and other system dialogs follow the system language.
 The Chinese window title is AirKey · 语音键 — Insta360 Mic Air.
 To upgrade, quit the old app and standalone volume probe, then replace its EXE with AirKey.exe. An installed, working driver does not need to be reinstalled.
-Upgrading to v1.3.0 requires confirming voice starts without changing volume; older voice-only confirmation is not sufficient.
+v1.4.0 retains a valid local configuration already verified for voice activation and unchanged volume.
+An existing configuration using the compatibility method stays in Compatibility mode; it is not forced into Standard mode. Older voice-only verification still requires setup again.
 Existing shortcut and language settings remain in %LOCALAPPDATA%\MicAirDoubao; the folder name is retained for compatibility.
 Each computer saves its own verified configuration. Repeat setup on a new computer, when the previous connection disappears,
 or when the saved connection can no longer be identified reliably. Copying the EXE or old settings does not replace that verification.
@@ -55,6 +58,16 @@ Do not run the old driver-bridge.ahk or another Volume Up mapping at the same ti
 The app prevents multiple instances and asks you to close the known old test window if it is running.
 
 Settings
+Mode: choose Standard mode (recommended) or Compatibility mode.
+- Standard mode (recommended) is the default for first-time setup. It receives the button and triggers your voice shortcut directly.
+- Compatibility mode is an option when Standard mode does not work. It receives the microphone's media-button signal and enables volume blocking at the same time.
+Choosing another mode opens the wizard. Detect the button again, press it with the input box focused,
+then confirm that voice starts, volume stays unchanged and no volume overlay appears. Only then is the new mode saved and enabled.
+Cancelling keeps the previous configuration and restores its enabled or paused state. With no previous configuration, cancelling leaves setup incomplete.
+You can switch back to Standard mode using the same steps.
+The mode determines how AirKey receives your button. Voice failed, try another only tests the next connection within that mode; it does not change the mode.
+Neither choice requires a device number. Compatibility mode also blocks Volume Up from other sources reaching the same channel; use the system volume slider to adjust volume.
+
 Change shortcut: open Settings, find the shortcut for starting Doubao, click Edit,
 then Start Recording. Press the combination you want and save it.
 Recording distinguishes left/right modifiers and supports common main keys.
@@ -63,7 +76,8 @@ Set the same hands-free shortcut in Doubao IME; the two must match.
 After changing the shortcut, complete button setup again to confirm the new combination starts Doubao voice input.
 
 Set Up Button Again: choose this in Settings if the button does not respond or you need to set it up again.
-It detects the button again and lets you try the available connections, leaving your chosen shortcut unchanged.
+It detects the button again in the current mode and lets you try the available connections, leaving your chosen shortcut unchanged.
+Explicitly choose another mode if needed. AirKey will not change to Compatibility mode automatically.
 A trial shortcut is sent only when you press Mic Air with the wizard's input box focused.
 The new result is saved only after you click Both work, finish setup. If it did not start, click Voice failed, try another.
 AirKey does not automatically decide whether Doubao started. If setup still fails, check that the manual shortcut works,
@@ -82,10 +96,9 @@ Uninstalling Interception affects other applications on this computer that use t
 
 Limitations
 - This build is for Intel/AMD Windows x64. Windows on ARM is not supported.
-- Setup chooses the input method automatically; you do not need to select it.
-  In keyboard-key mode, every received Volume Up event can trigger voice input, including the keyboard's Volume Up key.
-  Raw device input starts the built-in volume guard; the standalone probe is no longer needed.
-  The guard handles all volume-up commands reaching its channel, not just Mic Air; use the system slider to adjust volume.
+- Standard mode handles every received Volume Up event, so the keyboard's Volume Up key may also start voice input.
+  Compatibility mode receives media-button signals from the identified microphone and enables the built-in volume guard; the standalone probe is no longer needed.
+  The guard handles all Volume Up commands reaching its channel, including other sources, not just Mic Air; use the system slider to adjust volume.
 - Triggers are spaced at least approximately 1.5 seconds apart to avoid repeated activation from one press.
 - The app only sends the start shortcut; it does not detect whether Doubao is recording.
 - On another computer, prepare the driver there and complete the wizard again. If the button stops responding, use Settings → Set Up Button Again.
@@ -97,9 +110,11 @@ Limitations
   The wizard cannot automatically resolve a driver blocked by Windows. If this happens, stop installation or uninstall it. Do not disable system security protections.
 
 How the button is received
-Setup checks registered hotkeys, keyboard hooks and raw device input, selecting only after an event. Raw input also activates the built-in volume-command guard.
-All methods use Interception to send your configured shortcut; Interception does not intercept raw keyboard input.
+Standard mode uses registered hotkeys or keyboard hooks. Compatibility mode uses raw media input and enables the built-in volume guard at the same time.
+Standard mode never changes to Compatibility mode automatically; you must choose and verify it. Changing mode requires no additional driver.
+Both modes use Interception to send your configured shortcut; Interception does not intercept raw keyboard input.
 Driver installation and removal still require administrator permission and a manual restart. The wizard cannot bypass these requirements.
+Success with one mode confirms the current trial only; it does not establish the cause of a historical failure in an older version.
 
 Component sources and licenses
 AutoHotkey v2 / Ahk2Exe: https://github.com/AutoHotkey
